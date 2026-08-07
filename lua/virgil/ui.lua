@@ -1,0 +1,229 @@
+--- Small UI helpers: the note composer and the picker fallback chain.
+local config = require('virgil.config')
+local util = require('virgil.util')
+
+local M = {}
+
+local compose_seq = 0
+
+--- Floating scratch window for writing a note.
+--- First non-empty line is the summary, everything after it the rationale.
+---@param opts table `{ title, summary, rationale }`
+---@param on_done fun(summary: string, rationale: string)
+function M.compose(opts, on_done)
+  opts = opts or {}
+  local buf = vim.api.nvim_create_buf(false, true)
+  compose_seq = compose_seq + 1
+  pcall(vim.api.nvim_buf_set_name, buf, ('virgil://note/%d'):format(compose_seq))
+
+  local lines = {}
+  table.insert(lines, opts.summary or '')
+  if opts.rationale and opts.rationale ~= '' then
+    table.insert(lines, '')
+    vim.list_extend(lines, vim.split(opts.rationale, '\n', { plain = true }))
+  end
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+
+  vim.bo[buf].buftype = 'acwrite'
+  vim.bo[buf].bufhidden = 'wipe'
+  vim.bo[buf].swapfile = false
+  vim.bo[buf].filetype = 'markdown'
+  vim.bo[buf].modified = false
+
+  local width = math.min(84, math.max(40, vim.o.columns - 8))
+  local height = math.min(12, math.max(6, vim.o.lines - 8))
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = 'editor',
+    width = width,
+    height = height,
+    row = math.floor((vim.o.lines - height) / 2 - 1),
+    col = math.floor((vim.o.columns - width) / 2),
+    style = 'minimal',
+    border = 'rounded',
+    title = ' ' .. (opts.title or 'virgil note') .. ' ',
+    title_pos = 'left',
+    footer = ' <C-s> save   q cancel ',
+    footer_pos = 'right',
+  })
+  vim.wo[win].wrap = true
+  vim.wo[win].linebreak = true
+
+  local finished = false
+  local function close()
+    -- leaving the float while still in insert mode would drop the user into
+    -- insert mode in the code buffer underneath
+    vim.cmd('stopinsert')
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+  end
+
+  local function submit()
+    if finished then
+      return
+    end
+    local content = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+    local summary, rest = '', {}
+    for i, l in ipairs(content) do
+      if summary == '' and vim.trim(l) ~= '' then
+        summary = vim.trim(l)
+        rest = vim.list_slice(content, i + 1)
+        break
+      end
+    end
+    while #rest > 0 and vim.trim(rest[1]) == '' do
+      table.remove(rest, 1)
+    end
+    while #rest > 0 and vim.trim(rest[#rest]) == '' do
+      table.remove(rest)
+    end
+    if summary == '' then
+      util.warn('empty note discarded')
+      finished = true
+      close()
+      return
+    end
+    finished = true
+    vim.bo[buf].modified = false
+    close()
+    on_done(summary, table.concat(rest, '\n'))
+  end
+
+  vim.keymap.set({ 'n', 'i' }, '<C-s>', submit, { buffer = buf, desc = 'virgil: save note' })
+  vim.keymap.set('n', 'q', function()
+    finished = true
+    vim.bo[buf].modified = false
+    close()
+  end, { buffer = buf, desc = 'virgil: cancel note' })
+  vim.keymap.set('n', 'ZZ', submit, { buffer = buf })
+
+  vim.api.nvim_create_autocmd('BufWriteCmd', {
+    buffer = buf,
+    callback = submit,
+  })
+
+  vim.cmd('startinsert')
+  if opts.summary and opts.summary ~= '' then
+    vim.cmd('stopinsert')
+  else
+    vim.api.nvim_win_set_cursor(win, { 1, 0 })
+  end
+  return buf
+end
+
+local function has(mod)
+  return pcall(require, mod)
+end
+
+local function abs_key(path, line)
+  return vim.fs.normalize(vim.fn.fnamemodify(path, ':p')) .. ':' .. tostring(line or 1)
+end
+
+--- Actions that act on the *note*, not on the list.
+---
+--- fzf-lua's own `ctrl-x` on a quickfix list only drops rows from the throwaway
+--- list it was handed, which reads like a delete but is not one. Here the key
+--- does what its header says.
+---@param index table `abs path:line -> { {id, summary}, … }`, refreshed by `fill`
+---@param fill fun(): integer rebuilds the quickfix list and the index
+local function note_actions(index, fill)
+  local fzf = require('fzf-lua')
+
+  --- Which notes do the selected rows stand for?
+  local function ids_of(selected)
+    local ids, seen = {}, {}
+    for _, sel in ipairs(selected or {}) do
+      local ok, entry = pcall(fzf.path.entry_to_file, sel, {})
+      local candidates = (ok and entry and entry.path) and index[abs_key(entry.path, entry.line)] or {}
+      for _, c in ipairs(candidates) do
+        -- several notes can share a line; the summary is in the row text
+        if (#candidates == 1 or sel:find(c.summary, 1, true)) and not seen[c.id] then
+          seen[c.id] = true
+          table.insert(ids, c.id)
+        end
+      end
+    end
+    return ids
+  end
+
+  local function act(fn)
+    return function(selected)
+      local ids = ids_of(selected)
+      if #ids == 0 then
+        util.warn('could not tell which note that row is')
+        return
+      end
+      fn(ids)
+      fill()
+    end
+  end
+
+  return {
+    ['ctrl-x'] = {
+      fn = act(function(ids)
+        require('virgil').remove(ids)
+      end),
+      reload = true,
+      header = 'delete note',
+    },
+    ['ctrl-r'] = {
+      fn = act(function(ids)
+        require('virgil').resolve(ids)
+      end),
+      reload = true,
+      header = 'resolve note',
+    },
+  }
+end
+
+--- Show notes through whichever picker is available: fzf-lua, then snacks,
+--- then quickfix. virgil has no hard dependencies, so all of them may be gone.
+---
+--- `build()` returns quickfix-shaped items; each may carry `note_id` and
+--- `summary` so the picker can act on the note behind the row.
+---@param build fun(): table[]
+---@param opts table|nil `{ title }`
+function M.pick(build, opts)
+  opts = opts or {}
+  local title = opts.title or 'virgil'
+  local index = {}
+  local first = true
+
+  local function fill()
+    local items = build()
+    -- cleared in place: the actions below hold a reference to this very table
+    for k in pairs(index) do
+      index[k] = nil
+    end
+    for _, it in ipairs(items) do
+      if it.note_id then
+        local key = abs_key(it.filename, it.lnum)
+        index[key] = index[key] or {}
+        table.insert(index[key], { id = it.note_id, summary = it.summary or '' })
+      end
+    end
+    vim.fn.setqflist({}, first and ' ' or 'r', { title = title, items = items })
+    first = false
+    return #items
+  end
+
+  if fill() == 0 then
+    util.notify('no notes')
+    return
+  end
+
+  local want = config.options.picker
+  if want == 'auto' then
+    want = has('fzf-lua') and 'fzf-lua' or (has('snacks') and 'snacks' or 'quickfix')
+  end
+
+  if want == 'fzf-lua' and has('fzf-lua') then
+    require('fzf-lua').quickfix({ actions = note_actions(index, fill) })
+  elseif want == 'snacks' and has('snacks') then
+    require('snacks').picker.qflist()
+  else
+    vim.cmd('botright copen')
+  end
+end
+
+return M
