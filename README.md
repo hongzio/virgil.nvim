@@ -181,18 +181,46 @@ nvim --server "$SOCK" --remote-expr "json_encode(v:lua.require'virgil'.notes({'s
 
 Wrapping a call in `json_encode()` turns any result into a single easily parsed line.
 
-Temna o hand an agent is [SKILL.md](SKILL.md) — finding the socket, quoting rules,
-and what is and isn't worth a note. For Claude Code you can mount it as a skill directly:
-
-```sh
-mkdir -p .claude/skills/virgil && ln -s ../../../SKILL.md .claude/skills/virgil/SKILL.md
-```
-
 The socket path comes from `vim.g.virgil_socket`, or defaults to
 `$XDG_RUNTIME_DIR/virgil.sock` (`$TMPDIR/virgil-$USER.sock` on macOS). If another instance
 already holds that path, this one falls back to `<path>.<pid>`. Socket files left behind by
 dead instances are cleaned up automatically. `:Virgil socket` prints the current instance's
 path and also puts it on the `+` clipboard.
+
+### The agent's manual
+
+[SKILL.md](SKILL.md) is the file to hand an agent: finding the socket, the quoting rules
+that survive `--remote-expr`, and — the part that matters most — what is and isn't worth a
+note. It is plain Markdown, so any agent that takes a document as context can read it.
+
+For **Claude Code** it is a skill, and installing it is a symlink. Personal, so it follows
+you into every repository:
+
+```sh
+mkdir -p ~/.claude/skills/virgil
+ln -s "$PWD/SKILL.md" ~/.claude/skills/virgil/SKILL.md
+```
+
+Or scoped to one project, and committed with it, so everyone working on the repository
+gets it:
+
+```sh
+mkdir -p .claude/skills/virgil
+ln -s ../../../SKILL.md .claude/skills/virgil/SKILL.md
+```
+
+A symlink rather than a copy: the manual then changes when virgil does, and there is one
+file to keep honest instead of two. The directory name is what the skill is called, so keep
+it `virgil` — the `name` in SKILL.md's frontmatter matches it.
+
+Claude Code reads the `description` from that frontmatter and reaches for the skill on its
+own when the work fits — reviewing a diff, pinning a finding, checking what was left
+earlier. You can also ask for it by name with `/virgil`. A skill installed mid-session is
+picked up by the next one.
+
+Nothing about virgil requires it. The skill is a manual, not an interface: an agent that
+has never read it can still call the same `--remote-expr` API, it will just be worse at
+deciding what deserves a note.
 
 ### Lua API
 
