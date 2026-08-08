@@ -226,6 +226,11 @@ function M.start(opts)
     tabs = {},
   }
 
+  -- configured on, it starts on; configured off, a manual toggle still carries
+  -- across reviews rather than being reset under you
+  if config.options.review.sidebar then
+    M.sidebar_toggle(true)
+  end
   M.open_file(files[1].path)
   util.notify(('%s · %d file%s'):format(M.state.spec, #files, #files == 1 and '' or 's'))
   return M.state
@@ -243,6 +248,158 @@ function M.entry(path)
     end
   end
   return nil
+end
+
+------------------------------------------------------------------- sidebar
+--
+-- A review is one tab per file, so "the sidebar" is really one window per tab
+-- showing one shared buffer. It is off by default and follows you from tab to
+-- tab rather than being rebuilt: what changes between tabs is which row is
+-- marked current, and that is a redraw, not a window.
+
+local sidebar = { on = false, buf = nil, wins = {}, rows = {} }
+local SIDEBAR_NS = vim.api.nvim_create_namespace('virgil.sidebar')
+
+local function sidebar_buf()
+  if sidebar.buf and vim.api.nvim_buf_is_valid(sidebar.buf) then
+    return sidebar.buf
+  end
+  local buf = vim.api.nvim_create_buf(false, true)
+  pcall(vim.api.nvim_buf_set_name, buf, 'virgil://review/files')
+  vim.bo[buf].buftype = 'nofile'
+  vim.bo[buf].bufhidden = 'hide'
+  vim.bo[buf].swapfile = false
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].filetype = 'virgil-files'
+  vim.keymap.set('n', '<CR>', function()
+    M.sidebar_open_under_cursor()
+  end, { buffer = buf, nowait = true, desc = 'virgil: open this file' })
+  vim.keymap.set('n', 'q', function()
+    M.sidebar_toggle(false)
+  end, { buffer = buf, nowait = true, desc = 'virgil: close the file list' })
+  sidebar.buf = buf
+  return buf
+end
+
+--- Keep the tail of a path: the file name says more than the repository root.
+local function shorten(path, budget)
+  if budget < 4 or vim.fn.strdisplaywidth(path) <= budget then
+    return path
+  end
+  local chars = vim.fn.strcharlen(path)
+  return '…' .. vim.fn.strcharpart(path, chars - (budget - 1))
+end
+
+local function sidebar_render()
+  local buf = sidebar_buf()
+  local width = config.options.review.sidebar_width
+  local current = vim.t[vim.api.nvim_get_current_tabpage()].virgil_review
+  local lines, tails = {}, {}
+  sidebar.rows = {}
+
+  -- widths are display cells (▸ and ♦ are one cell but several bytes); extmark
+  -- columns are byte offsets. Mixing the two is what makes a column wobble.
+  local dw = vim.fn.strdisplaywidth
+  for _, f in ipairs(M.files()) do
+    local head = ('%s %s '):format(f.path == current and '▸' or ' ', f.status)
+    local tail = ('+%d -%d%s'):format(f.added, f.removed, f.notes > 0 and ('  %d♦'):format(f.notes) or '')
+    local name = shorten(f.path, width - dw(head) - dw(tail) - 2)
+    local pad = math.max(width - dw(head) - dw(name) - dw(tail) - 1, 1)
+    table.insert(lines, head .. name .. string.rep(' ', pad) .. tail)
+    table.insert(tails, { row = #lines - 1, from = #head + #name + pad, current = f.path == current })
+    table.insert(sidebar.rows, f.path)
+  end
+
+  vim.bo[buf].modifiable = true
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
+  vim.api.nvim_buf_clear_namespace(buf, SIDEBAR_NS, 0, -1)
+  for _, t in ipairs(tails) do
+    if t.current then
+      vim.api.nvim_buf_set_extmark(buf, SIDEBAR_NS, t.row, 0, { end_row = t.row + 1, hl_group = 'VirgilSummary' })
+    end
+    vim.api.nvim_buf_set_extmark(buf, SIDEBAR_NS, t.row, t.from, { end_row = t.row + 1, hl_group = 'VirgilDim' })
+  end
+end
+
+local function open_sidebar_win()
+  local prev = vim.api.nvim_get_current_win()
+  vim.cmd('topleft vsplit')
+  local win = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_buf(win, sidebar_buf())
+  -- a split off a diff window inherits 'diff'; a file list is not a revision
+  vim.wo[win].diff = false
+  vim.wo[win].wrap = false
+  vim.wo[win].number = false
+  vim.wo[win].relativenumber = false
+  vim.wo[win].signcolumn = 'no'
+  vim.wo[win].winfixwidth = true
+  vim.wo[win].cursorline = true
+  vim.api.nvim_win_set_width(win, config.options.review.sidebar_width)
+  -- a vsplit takes its width out of the current window alone, which would
+  -- leave the two halves of the diff lopsided. 'winfixwidth' holds the list at
+  -- its column while the rest is shared out evenly.
+  vim.cmd('wincmd =')
+  if vim.api.nvim_win_is_valid(prev) then
+    vim.api.nvim_set_current_win(prev)
+  end
+  return win
+end
+
+--- Bring this tab in line with whether the sidebar is on. Cheap enough to call
+--- on every tab switch and after any change to the notes.
+function M.sidebar_sync()
+  for tab, win in pairs(sidebar.wins) do
+    if not vim.api.nvim_tabpage_is_valid(tab) or not vim.api.nvim_win_is_valid(win) then
+      sidebar.wins[tab] = nil
+    end
+  end
+
+  local tab = vim.api.nvim_get_current_tabpage()
+  local want = sidebar.on and M.state ~= nil and M.tabs[tab] ~= nil
+  if not want then
+    local win = sidebar.wins[tab]
+    if win and vim.api.nvim_win_is_valid(win) then
+      pcall(vim.api.nvim_win_close, win, true)
+    end
+    sidebar.wins[tab] = nil
+    return
+  end
+  if not sidebar.wins[tab] then
+    sidebar.wins[tab] = open_sidebar_win()
+  end
+  sidebar_render()
+end
+
+--- Show or hide the review's file list. Returns the state it settled on.
+---@param to boolean|nil nil toggles
+---@return boolean on
+function M.sidebar_toggle(to)
+  if to == nil then
+    sidebar.on = not sidebar.on
+  else
+    sidebar.on = to and true or false
+  end
+  if not sidebar.on then
+    -- close every tab's, not just this one: a stranded list in a tab you have
+    -- not visited yet reads as the toggle having failed
+    for tab, win in pairs(sidebar.wins) do
+      if vim.api.nvim_win_is_valid(win) then
+        pcall(vim.api.nvim_win_close, win, true)
+      end
+      sidebar.wins[tab] = nil
+    end
+  end
+  M.sidebar_sync()
+  return sidebar.on
+end
+
+function M.sidebar_open_under_cursor()
+  local row = vim.api.nvim_win_get_cursor(0)[1]
+  local path = sidebar.rows[row]
+  if path then
+    M.open_file(path)
+  end
 end
 
 --- Open (or jump to) the diff tab for one file.
@@ -263,6 +420,7 @@ function M.open_file(path)
   local existing = tab_of(path)
   if existing then
     vim.api.nvim_set_current_tabpage(existing)
+    M.sidebar_sync()
     return true
   end
 
@@ -315,6 +473,7 @@ function M.open_file(path)
   local render = require('virgil.render')
   render.render(old_buf)
   render.render(new_buf)
+  M.sidebar_sync()
   return true
 end
 
@@ -600,6 +759,10 @@ function M.close(opts)
   local st = M.state
   if not st then
     return
+  end
+  -- the tabs are about to go; the list windows in them go with the tabs
+  for tab in pairs(sidebar.wins) do
+    sidebar.wins[tab] = nil
   end
   local review_tabs = {}
   local count = 0

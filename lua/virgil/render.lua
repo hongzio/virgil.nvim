@@ -411,6 +411,11 @@ function M.refresh()
   for _, buf in ipairs(util.visible_buffers()) do
     M.render(buf)
   end
+  -- the review's file list carries per-file note counts, so it is stale too
+  local review = require('virgil.review')
+  if review.state then
+    review.sidebar_sync()
+  end
 end
 
 --- Cycle visibility: default -> all -> off.

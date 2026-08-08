@@ -42,6 +42,7 @@ Requires Neovim 0.10+ (0.12 recommended — its default `diffopt` is
 :Virgil keep             " break a note's origin link, making it permanent
 :Virgil review [base] [head]   " open a changeset as diff tabs; with no arguments, pick one
 :Virgil files            " changed-file picker
+:Virgil sidebar          " toggle the review's changed-file list
 :Virgil export [path] [format] " export notes (agent-context | json | markdown)
 :Virgil import [path]    " read in external notes
 :Virgil prune            " clean up notes that lost their position
@@ -79,6 +80,7 @@ vim.keymap.set('n', '<localleader>k', '<Plug>(virgil-keep)')
 vim.keymap.set('n', '<localleader>t', '<Plug>(virgil-toggle)')
 vim.keymap.set('n', ']f', '<Plug>(virgil-next-file)')
 vim.keymap.set('n', '[f', '<Plug>(virgil-prev-file)')
+vim.keymap.set('n', '<localleader>s', '<Plug>(virgil-sidebar)')
 ```
 
 Hunk navigation uses diff mode's built-in `]c` / `[c` as-is.
@@ -88,6 +90,22 @@ Hunk navigation uses diff mode's built-in `]c` / `[c` as-is.
 `:Virgil review origin/main` spreads a changeset into per-file diff tabs. Tabs are created
 on visit — a 200-file review does not open 200 tabs up front. `]f` / `[f` move between
 files, `:Virgil files` picks any file directly, and `:Virgil quit` cleans everything up.
+
+`:Virgil sidebar` puts the whole changeset beside the diff, one row per file:
+
+```
+▸ M README.md               +26 -1  31♦
+  M lua/virgil/git.lua           +59 -0
+  M lua/virgil/review.lua      +319 -10
+```
+
+`<CR>` opens a row, `q` closes the list. Because a review is one tab per file, this is one
+window per tab over a **single shared buffer** — what differs between tabs is which row
+carries the `▸`, and that is a redraw rather than another window's worth of state. Turning
+it off closes it in every tab at once, including the ones you have not visited: a list left
+standing in a tab you later walk into reads as the toggle having failed. It is off by
+default (`review.sidebar = true` opens it with every review, `review.sidebar_width` sets
+the column).
 
 With no arguments it asks which changeset instead: what is uncommitted, **the reviews that
 already hold notes**, what this branch adds over the one it tracks, and recent commits
@@ -231,6 +249,8 @@ require('virgil').setup({
   review = {
     layout = 'vertical', -- 'vertical' | 'horizontal'
     highlight = 'syntax',-- 'syntax' | 'filetype' | false
+    sidebar = false,     -- open the changed-file list with every review
+    sidebar_width = 40,
   },
   socket = { enable = true, path = nil },
   prune = { orphan_days = 30, resolved_days = 90 },
