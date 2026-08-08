@@ -242,6 +242,16 @@ function M.rev_commit(repo, rev)
   return out and vim.trim(out) ~= '' and vim.trim(out) or nil
 end
 
+--- The commit two revisions parted from, if they share any history.
+---@param repo table
+---@param a string
+---@param b string
+---@return string|nil
+function M.merge_base(repo, a, b)
+  local out = M.exec(repo, { 'merge-base', a, b })
+  return out and vim.trim(out) ~= '' and vim.trim(out) or nil
+end
+
 ---@param repo table
 ---@param rev string
 ---@return string short human label for a revision

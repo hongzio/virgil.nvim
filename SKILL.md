@@ -151,6 +151,10 @@ nvim --server "$SOCK" --remote-expr "json_encode(v:lua.require'virgil'.files())"
 tree). `files()` returns `[{path, status, added, removed, notes}]` — use it to choose where
 to start.
 
+With both `base` and `head` the diff runs from their merge base (`base...head`), so it
+matches what a forge shows for a pull request. Don't compute the merge base yourself; pass
+the branch or ref you mean.
+
 Notes written while a review is open record their origin automatically:
 
 ```json

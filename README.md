@@ -89,6 +89,13 @@ Hunk navigation uses diff mode's built-in `]c` / `[c` as-is.
 on visit — a 200-file review does not open 200 tabs up front. `]f` / `[f` move between
 files, `:Virgil files` picks any file directly, and `:Virgil quit` cleans everything up.
 
+With two commits the diff is taken from where their histories parted, git's
+`base...head` — the same range a forge shows for a pull request, and what the review spec
+prints. Measuring from the tip of the base branch instead would fold every commit the base
+gained since the branch point into the review, backwards: files the change never touched,
+listed as though it reverted them. A review against the working tree keeps the plain
+two-dot `base..worktree`; there is no second commit to part from.
+
 The left side is a read-only scratch buffer holding the old revision's blob; the right side
 is **the real file on disk**. That means on the right, `gd` (go to definition), finding
 references, and fixing and saving in place all work exactly as they normally do. This
