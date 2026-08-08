@@ -742,6 +742,75 @@ do
   review.close()
 end
 
+section('changeset candidates')
+local cdir = new_repo('candidates')
+do
+  vim.cmd('cd ' .. vim.fn.fnameescape(cdir))
+  write(cdir, 'a.txt', { 'one' })
+  sh('git add -A && git commit -qm root', cdir)
+  local root = sh('git rev-parse HEAD', cdir)
+  write(cdir, 'a.txt', { 'two' })
+  sh('git add -A && git commit -qm second', cdir)
+  local second = sh('git rev-parse HEAD', cdir)
+
+  reset_state()
+  local repo = git.repo(cdir)
+  local function kinds(list)
+    return vim.tbl_map(function(i)
+      return i.kind
+    end, list)
+  end
+  local function first_of(list, kind)
+    for i, it in ipairs(list) do
+      if it.kind == kind then
+        return i, it
+      end
+    end
+  end
+
+  local clean = review.candidates(repo)
+  check('a clean tree offers nothing to review in it', not vim.tbl_contains(kinds(clean), 'worktree'), vim.inspect(kinds(clean)))
+  local commits = vim.tbl_filter(function(i)
+    return i.kind == 'commit'
+  end, clean)
+  eq('a root commit has no parent to diff against, so it is not offered', #commits, 1)
+  eq('a commit is offered against its parent', commits[1].base, second .. '^')
+  eq('and is the head of that diff', commits[1].head, second)
+
+  write(cdir, 'a.txt', { 'three' })
+  local dirty = review.candidates(repo)
+  eq('uncommitted changes come first', dirty[1].kind, 'worktree')
+  eq('measured from HEAD', dirty[1].base, 'HEAD')
+  check('to the working tree, which is not a commit', dirty[1].head == nil)
+  eq('counted', dirty[1].detail, '1 file')
+
+  -- a note that remembers its review puts that review back on the list
+  local function note_from(ctx)
+    return store.add(repo, {
+      anchor = { kind = 'blob', blob = git.file_blob(repo, second, 'a.txt'), path = 'a.txt', line = 1, end_line = 1, text = 'two' },
+      author = 't',
+      summary = 'from a review',
+      rationale = '',
+      status = 'open',
+      created_at = util.now(),
+      context = ctx,
+    })
+  end
+  note_from({ review = 'root...second', base = root, head = second })
+  note_from({ review = 'root...second', base = root, head = second })
+  note_from({ review = 'gone...gone', base = string.rep('f', 40), head = string.rep('e', 40) })
+
+  local listed = review.candidates(repo)
+  local at, entry = first_of(listed, 'notes')
+  check('a review holding notes is offered', entry ~= nil, vim.inspect(kinds(listed)))
+  eq('under the label it was recorded with', entry.label, 'root...second')
+  eq('once, however many notes it holds', entry.detail, '2 notes')
+  check('ahead of the commit list', at < (first_of(listed, 'commit')), vim.inspect(kinds(listed)))
+  eq('and a review whose commits are gone is not offered', #vim.tbl_filter(function(i)
+    return i.kind == 'notes'
+  end, listed), 1)
+end
+
 --------------------------------------------------------------------- summary
 
 io.write(('\n%d passed, %d failed\n'):format(passed, #failures))

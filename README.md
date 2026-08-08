@@ -40,7 +40,7 @@ Requires Neovim 0.10+ (0.12 recommended — its default `diffopt` is
 :Virgil toggle           " cycle visibility: default → all → off
 :Virgil resolve          " resolve the note near the cursor
 :Virgil keep             " break a note's origin link, making it permanent
-:Virgil review [base] [head]   " open a changeset as diff tabs (worktree if head is omitted)
+:Virgil review [base] [head]   " open a changeset as diff tabs; with no arguments, pick one
 :Virgil files            " changed-file picker
 :Virgil export [path] [format] " export notes (agent-context | json | markdown)
 :Virgil import [path]    " read in external notes
@@ -88,6 +88,13 @@ Hunk navigation uses diff mode's built-in `]c` / `[c` as-is.
 `:Virgil review origin/main` spreads a changeset into per-file diff tabs. Tabs are created
 on visit — a 200-file review does not open 200 tabs up front. `]f` / `[f` move between
 files, `:Virgil files` picks any file directly, and `:Virgil quit` cleans everything up.
+
+With no arguments it asks which changeset instead: what is uncommitted, **the reviews that
+already hold notes**, what this branch adds over the one it tracks, and recent commits
+against their parents. The middle one is the point — after an agent leaves notes on a
+changeset, that changeset is a list entry rather than a pair of revisions you have to
+remember. The last row hands you the command line, where ref completion already works. It
+is `vim.ui.select`, so whatever picker you have configured is the one you get.
 
 With two commits the diff is taken from where their histories parted, git's
 `base...head` — the same range a forge shows for a pull request, and what the review spec
