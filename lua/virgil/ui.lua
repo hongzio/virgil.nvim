@@ -166,13 +166,6 @@ local function note_actions(index, fill)
       reload = true,
       header = 'delete note',
     },
-    ['ctrl-r'] = {
-      fn = act(function(ids)
-        require('virgil').resolve(ids)
-      end),
-      reload = true,
-      header = 'resolve note',
-    },
   }
 end
 

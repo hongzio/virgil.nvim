@@ -38,8 +38,7 @@ Requires Neovim 0.10+ (0.12 recommended — its default `diffopt` is
 :Virgil note             " write a note on the current line (or visual selection)
 :Virgil notes            " list notes
 :Virgil toggle           " cycle visibility: default → all → off
-:Virgil resolve          " resolve the note near the cursor
-:Virgil keep             " break a note's origin link, making it permanent
+:Virgil remove           " delete the note near the cursor (irreversible)
 :Virgil review [base] [head]   " open a changeset as diff tabs; with no arguments, pick one
 :Virgil files            " changed-file picker
 :Virgil sidebar          " toggle the review's changed-file list
@@ -58,7 +57,6 @@ In the `:Virgil notes` list (when using fzf-lua):
 | Key | Action |
 |---|---|
 | `<CR>` | jump to the note |
-| `<C-r>` | resolve the note |
 | `<C-x>` | **delete the note** (irreversible) |
 
 Selecting several rows with `<Tab>` acts on all of them at once. fzf-lua's default `<C-x>`
@@ -75,8 +73,7 @@ No default keymaps are installed; only `<Plug>` mappings are provided. Suggested
 vim.keymap.set({ 'n', 'x' }, '<localleader>n', '<Plug>(virgil-note)')
 vim.keymap.set('n', ']n', '<Plug>(virgil-next-note)')
 vim.keymap.set('n', '[n', '<Plug>(virgil-prev-note)')
-vim.keymap.set('n', '<localleader>r', '<Plug>(virgil-resolve)')
-vim.keymap.set('n', '<localleader>k', '<Plug>(virgil-keep)')
+vim.keymap.set('n', '<localleader>x', '<Plug>(virgil-remove)')
 vim.keymap.set('n', '<localleader>t', '<Plug>(virgil-toggle)')
 vim.keymap.set('n', ']f', '<Plug>(virgil-next-file)')
 vim.keymap.set('n', '[f', '<Plug>(virgil-prev-file)')
@@ -198,7 +195,7 @@ virgil.note({ path, line, end_line, summary, rationale, author })
 virgil.notes({ path, status, review, id })  -- stored anchor + projection into the current view
 virgil.update(id, { summary = '…' })
 virgil.open(path, { line = 1036, rev = nil })
-virgil.keep(id) / virgil.resolve(id) / virgil.unresolve(id) / virgil.wontfix(id) / virgil.remove(id)
+virgil.remove(id)                  -- delete; nothing else in virgil destroys a note
                                    -- id also accepts a { id1, id2 } list. Omit it for the note under the cursor
 virgil.next_note() / virgil.prev_note()
 virgil.toggle('all')

@@ -336,72 +336,6 @@ function M.open(path, opts)
   return M.status()
 end
 
---- Cut notes loose from the review they were born in.
----@param ids string|string[]|nil
----@return table|nil last note touched
-function M.keep(ids)
-  local list, repo = resolve_ids(ids)
-  if #list == 0 or not repo then
-    return nil
-  end
-  local kept, last = 0, nil
-  for _, id in ipairs(list) do
-    local note = store.get(repo, id)
-    if not note then
-      util.warn('no note ' .. id)
-    elseif not note.context then
-      last = note
-    else
-      last = store.update(repo, id, { context = vim.NIL })
-      kept = kept + 1
-    end
-  end
-  render.refresh()
-  if kept == 0 then
-    util.notify('nothing to keep (no review link)')
-  else
-    util.notify(kept == 1 and ('note %s kept'):format(list[1]) or ('%d notes kept'):format(kept))
-  end
-  return last
-end
-
-local function set_status(ids, status)
-  local list, repo = resolve_ids(ids)
-  if #list == 0 or not repo then
-    return nil
-  end
-  local done, last = 0, nil
-  for _, id in ipairs(list) do
-    local note = store.update(repo, id, { status = status })
-    if note then
-      done = done + 1
-      last = note
-    else
-      util.warn('no note ' .. id)
-    end
-  end
-  if done > 0 then
-    render.refresh()
-    util.notify(done == 1 and ('note %s → %s'):format(list[1], status) or ('%d notes → %s'):format(done, status))
-  end
-  return last
-end
-
----@param ids string|string[]|nil
-function M.resolve(ids)
-  return set_status(ids, 'resolved')
-end
-
----@param ids string|string[]|nil
-function M.unresolve(ids)
-  return set_status(ids, 'open')
-end
-
----@param ids string|string[]|nil
-function M.wontfix(ids)
-  return set_status(ids, 'wontfix')
-end
-
 --- Delete notes. This is the only thing in virgil that destroys one, and it is
 --- not undoable — everything else fails by keeping the note.
 ---@param ids string|string[]|nil
@@ -411,10 +345,14 @@ function M.remove(ids)
   if #list == 0 or not repo then
     return false
   end
+  -- read the summary before it is gone: this is not undoable, so the message
+  -- has to say what went, not which id went
+  local only = #list == 1 and store.get(repo, list[1]) or nil
+  local label = only and only.summary ~= '' and only.summary or list[1]
   local n = store.remove(repo, list)
   render.refresh()
   if n > 0 then
-    util.notify(n == 1 and ('note %s removed'):format(list[1]) or ('%d notes removed'):format(n))
+    util.notify(n == 1 and ('removed: %s'):format(label) or ('%d notes removed'):format(n))
   end
   return n > 0
 end
