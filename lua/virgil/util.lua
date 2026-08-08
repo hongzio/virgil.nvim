@@ -172,6 +172,18 @@ function M.visible_buffers()
   return out
 end
 
+--- Is `buf` on screen in any window, in any tabpage?
+---@param buf integer
+---@return boolean
+function M.buf_is_displayed(buf)
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == buf then
+      return true
+    end
+  end
+  return false
+end
+
 --- Width available for note text in `buf`.
 ---
 --- Extmarks are per buffer, but the same buffer can be on screen in several

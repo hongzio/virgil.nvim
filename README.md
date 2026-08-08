@@ -95,13 +95,20 @@ is **the real file on disk**. That means on the right, `gd` (go to definition), 
 references, and fixing and saving in place all work exactly as they normally do. This
 asymmetry is the reason this plugin exists.
 
-A note is drawn on **exactly one side** — the side its content address belongs to. A note
-on new code appears only on the right; a note on the old implementation only on the left.
-An older note that matches neither address attaches to whichever side still has that line,
-and goes to the new side when both do. On a screen showing the same line side by side in
-two windows, drawing the note twice is unreadable — and worse, on the opposite side that
-line sits inside a hunk and would read as `stale`, which isn't true: nothing has changed
-since the note was written, you are just looking at a different revision.
+A note is drawn on **exactly one side** — whichever side still holds the line it was
+written on. A note on rewritten code stays on the left; a note on new code appears only on
+the right; a note on a line the changeset never touched goes to the new side, since that is
+the real file. Only when neither side kept the line intact does the content address decide.
+On a screen showing the same line side by side in two windows, drawing the note twice is
+unreadable — and worse, on the opposite side that line sits inside a hunk and would read as
+`stale`, which isn't true: nothing has changed since the note was written, you are just
+looking at a different revision.
+
+The choice is made **per line, not per file**. Addressing alone would be simpler, but a
+file's sha changes the moment you fix a typo anywhere in it, and every note in that file
+would march over to the old side at once. Splitting sides also stops the moment the other
+half leaves the screen: handing a note to a window nobody is looking at is
+indistinguishable from losing it.
 
 One review per instance. Starting a new one tears down the previous review's tabs.
 

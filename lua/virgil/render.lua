@@ -76,26 +76,34 @@ end
 --- inside a hunk, so marked `stale`. That reading is wrong: `stale` means the
 --- line changed *after* the note was written, and here nothing
 --- changed; we are just looking at the other revision. Since a review shows two
---- revisions of the same lines side by side, the note is drawn once, on the
---- side it is addressed to.
+--- revisions of the same lines side by side, the note is drawn once.
+---
+--- The side that kept the anchored line intact wins. Only when neither did does
+--- the content address decide, and a tie goes to the new side — that is the
+--- real file, the half being read and edited. Ownership is deliberately decided
+--- per line rather than per file: an edit anywhere in a file changes its sha,
+--- and addressing alone would then march every note in it over to the old side.
 ---@return boolean
 local function owns_note(view, other, note, pos)
   if not other then
     return true
   end
-  if addressed_by(view, note.anchor) then
-    return true
-  end
-  if addressed_by(other, note.anchor) then
-    return false
-  end
-  -- an older note, addressed to neither side: put it where the line survived
   local other_pos = project.project(other, note)
   if not other_pos then
     return true
   end
   if (pos.status == 'ok') ~= (other_pos.status == 'ok') then
     return pos.status == 'ok'
+  end
+  if pos.status ~= 'ok' then
+    -- the line is intact on neither side; the note belongs to the revision it
+    -- was written against
+    if addressed_by(view, note.anchor) then
+      return true
+    end
+    if addressed_by(other, note.anchor) then
+      return false
+    end
   end
   return view.side ~= 'old'
 end
