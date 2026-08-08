@@ -642,6 +642,69 @@ do
   review.close()
 end
 
+section('review provenance')
+local pdir = new_repo('provenance')
+do
+  vim.cmd('cd ' .. vim.fn.fnameescape(pdir))
+  write(pdir, 'a.txt', { 'one', 'two', 'three' })
+  sh('git add -A && git commit -qm one', pdir)
+  local c1 = sh('git rev-parse HEAD', pdir)
+  sh('git branch base-branch', pdir) -- a second name for the same commit
+  write(pdir, 'a.txt', { 'one', 'TWO', 'three' })
+  sh('git add -A && git commit -qm two', pdir)
+  local c2 = sh('git rev-parse HEAD', pdir)
+
+  reset_state()
+  edit(vim.fs.joinpath(pdir, 'a.txt'))
+  virgil.review({ base = 'base-branch', head = c2 })
+  local d = review.tabs[vim.api.nvim_get_current_tabpage()]
+  vim.api.nvim_set_current_win(d.right)
+  local n = virgil.note({ line = 2, summary = 'written in a review' })
+
+  eq('the label a human reads is still recorded', n.context.review, 'base-branch..' .. c2)
+  eq('base is recorded as the commit it resolved to', n.context.base, c1)
+  eq('together with the name it was typed as', n.context.base_ref, 'base-branch')
+  eq('head is recorded as a commit', n.context.head, c2)
+  check('a head already typed as a sha needs no second name', n.context.head_ref == nil, n.context.head_ref)
+
+  -- the point of keeping commits: the same changeset under another spelling
+  eq('a filter naming the same commits matches', #virgil.notes({ review = c1 .. '..' .. c2 }), 1)
+  eq('a different changeset does not', #virgil.notes({ review = 'HEAD..worktree' }), 0)
+
+  -- notes written before commits were kept have only their label, and it works
+  local legacy = store.add(git.repo(pdir), {
+    anchor = { kind = 'blob', blob = n.anchor.blob, path = 'a.txt', line = 1, end_line = 1, text = 'one' },
+    author = 't',
+    summary = 'legacy',
+    rationale = '',
+    status = 'open',
+    created_at = util.now(),
+    context = { review = 'base-branch..' .. c2 },
+  })
+  check('a note with no commits still matches its own label', #virgil.notes({ review = legacy.context.review }) == 2)
+  review.close()
+
+  -- reopened under a different spelling, the note is still *this* review's own
+  -- and must not be dimmed as belonging to someone else's
+  reset_state()
+  virgil.review({ base = c1, head = c2 })
+  check('the same commits under another spelling are one review', review.same_changeset(n.context, review.state))
+  check('and a note from elsewhere is not', not review.same_changeset(legacy.context, { spec = 'x..y', base_sha = c2 }))
+  review.close()
+
+  -- a worktree review has no head commit, rather than a "worktree" revision
+  write(pdir, 'a.txt', { 'one', 'TWO', 'four' })
+  reset_state()
+  edit(vim.fs.joinpath(pdir, 'a.txt'))
+  virgil.review({ base = 'HEAD' })
+  local d2 = review.tabs[vim.api.nvim_get_current_tabpage()]
+  vim.api.nvim_set_current_win(d2.right)
+  local w = virgil.note({ line = 3, summary = 'against the worktree' })
+  eq('a worktree review records no head commit', w.context.head, nil)
+  eq('and its base is the commit HEAD stood at', w.context.base, c2)
+  review.close()
+end
+
 --------------------------------------------------------------------- summary
 
 io.write(('\n%d passed, %d failed\n'):format(passed, #failures))

@@ -39,16 +39,18 @@ local function visibility(note, pos, view)
     return false, false
   end
 
-  local review = require('virgil.review').state
+  local review = require('virgil.review')
+  local current = review.state
   local from_review = note.context and note.context.review or nil
 
   if view.review then
     -- inside a review tab: this review's own notes are the loud ones
-    return true, from_review ~= nil and from_review ~= view.review
+    local mine = review.same_changeset(note.context, current or { spec = view.review })
+    return true, from_review ~= nil and not mine
   end
   -- ordinary buffer: notes belonging to the review that is currently open are
   -- background context, not the point of this screen
-  local dim = review ~= nil and from_review == review.spec
+  local dim = current ~= nil and review.same_changeset(note.context, current)
   return true, dim or (pos.status == 'orphan' and m ~= 'all')
 end
 

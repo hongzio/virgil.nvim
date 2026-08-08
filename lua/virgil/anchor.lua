@@ -59,7 +59,10 @@ function M.view(buf)
   -- buffer; it just knows which review it is being read under
   local ok, review = pcall(require, 'virgil.review')
   if ok then
-    view.review, view.side = review.context_for_buf(buf)
+    local ctx = review.context_for_buf(buf)
+    if ctx then
+      view.review, view.side = ctx.spec, ctx.side
+    end
   end
   return view
 end

@@ -175,13 +175,20 @@ function M.start(opts)
     head = nil
   end
 
-  if not git.rev_commit(repo, base) then
+  -- resolve now and keep the result: `HEAD` and branch names move, and a note
+  -- written here has to be able to name this exact changeset later
+  local base_sha = git.rev_commit(repo, base)
+  if not base_sha then
     util.err(('unknown revision in %s: %s'):format(repo.root, base))
     return nil
   end
-  if head and not git.rev_commit(repo, head) then
-    util.err(('unknown revision in %s: %s'):format(repo.root, head))
-    return nil
+  local head_sha
+  if head then
+    head_sha = git.rev_commit(repo, head)
+    if not head_sha then
+      util.err(('unknown revision in %s: %s'):format(repo.root, head))
+      return nil
+    end
   end
 
   local files = collect(repo, base, head, opts.paths)
@@ -198,6 +205,8 @@ function M.start(opts)
     repo = repo,
     base = base,
     head = head,
+    base_sha = base_sha,
+    head_sha = head_sha,
     paths = opts.paths,
     spec = spec_of(base, head),
     files = files,
@@ -272,6 +281,11 @@ function M.open_file(path)
   M.tabs[tab] = {
     path = path,
     spec = st.spec,
+    base = st.base,
+    head = st.head,
+    base_sha = st.base_sha,
+    head_sha = st.head_sha,
+    paths = st.paths,
     left = left,
     right = right,
     left_buf = old_buf,
@@ -314,15 +328,27 @@ end
 --- Review metadata for a buffer, used to stamp `context` on new notes and to
 --- decide emphasis while rendering.
 ---@param buf integer
----@return string|nil spec, string|nil side, string|nil path
+---@return table|nil `{ spec, side, path, base, head, base_sha, head_sha, paths }`
 function M.context_for_buf(buf)
   for tab, data in pairs(M.tabs) do
     if vim.api.nvim_tabpage_is_valid(tab) then
+      local side
       if data.right_buf == buf then
-        return data.spec, 'new', data.path
+        side = 'new'
+      elseif data.left_buf == buf then
+        side = 'old'
       end
-      if data.left_buf == buf then
-        return data.spec, 'old', data.path
+      if side then
+        return {
+          spec = data.spec,
+          side = side,
+          path = data.path,
+          base = data.base,
+          head = data.head,
+          base_sha = data.base_sha,
+          head_sha = data.head_sha,
+          paths = data.paths,
+        }
       end
     else
       M.tabs[tab] = nil
@@ -358,6 +384,51 @@ function M.sibling_buf(buf)
   return nil
 end
 
+--- Does `context` name the same changeset as `other`?
+---
+--- Two reviews of the same two commits are the same review even when they were
+--- spelled differently — `origin/main..abc123` and `main..abc123` — so the
+--- recorded commits decide, and the label is only a fast path (and the only
+--- thing notes written before commits were recorded have).
+---@param context table|nil a note's `context`
+---@param other table|nil `{ spec, base_sha, head_sha }` — a review state or tab
+---@return boolean
+function M.same_changeset(context, other)
+  if not context or not other then
+    return false
+  end
+  if context.review and context.review == other.spec then
+    return true
+  end
+  if not context.base or not other.base_sha then
+    return false
+  end
+  return context.base == other.base_sha and (context.head or '') == (other.head_sha or '')
+end
+
+--- Read a `base..head` spec back into the commits it names, so a filter written
+--- as `origin/main..pr-1` still matches notes recorded under another spelling.
+---@param repo table
+---@param spec string
+---@return table `{ spec, base_sha, head_sha }`
+function M.changeset_of(repo, spec)
+  local out = { spec = spec }
+  local base, head = spec:match('^(.-)%.%.(.*)$')
+  if not base then
+    base, head = spec, nil
+  end
+  if head == '' or head == 'worktree' then
+    head = nil
+  end
+  if base ~= '' then
+    out.base_sha = git.rev_commit(repo, base)
+  end
+  if head then
+    out.head_sha = git.rev_commit(repo, head)
+  end
+  return out
+end
+
 --- `@@ -a,b +c,d @@ <enclosing line>` for the hunk around `line`.
 --- The enclosing line uses git's default rule: nearest line above that starts
 --- with an identifier character in column 1.
@@ -365,10 +436,11 @@ end
 ---@param line integer
 ---@return string|nil
 function M.hunk_header(buf, line)
-  local spec, side = M.context_for_buf(buf)
-  if not spec then
+  local ctx = M.context_for_buf(buf)
+  if not ctx then
     return nil
   end
+  local side = ctx.side
   local data
   for _, d in pairs(M.tabs) do
     if d.right_buf == buf or d.left_buf == buf then
