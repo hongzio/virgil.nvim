@@ -661,7 +661,7 @@ do
   vim.api.nvim_set_current_win(d.right)
   local n = virgil.note({ line = 2, summary = 'written in a review' })
 
-  eq('the label a human reads is still recorded', n.context.review, 'base-branch..' .. c2)
+  eq('the label a human reads is still recorded', n.context.review, 'base-branch...' .. c2)
   eq('base is recorded as the commit it resolved to', n.context.base, c1)
   eq('together with the name it was typed as', n.context.base_ref, 'base-branch')
   eq('head is recorded as a commit', n.context.head, c2)
@@ -702,6 +702,43 @@ do
   local w = virgil.note({ line = 3, summary = 'against the worktree' })
   eq('a worktree review records no head commit', w.context.head, nil)
   eq('and its base is the commit HEAD stood at', w.context.base, c2)
+  review.close()
+end
+
+section('merge base')
+local mdir = new_repo('mergebase')
+do
+  vim.cmd('cd ' .. vim.fn.fnameescape(mdir))
+  write(mdir, 'base.txt', { 'a' })
+  sh('git add -A && git commit -qm one', mdir)
+  local parted_at = sh('git rev-parse HEAD', mdir)
+  local trunk = sh('git rev-parse --abbrev-ref HEAD', mdir)
+
+  sh('git checkout -q -b feature', mdir)
+  write(mdir, 'feature.txt', { 'new' })
+  sh('git add -A && git commit -qm feature', mdir)
+
+  -- the base branch moves on after the branch point, which is what makes a
+  -- two-dot diff wrong: it would report base.txt as reverted by this branch
+  sh('git checkout -q ' .. trunk, mdir)
+  write(mdir, 'base.txt', { 'a', 'b' })
+  sh('git add -A && git commit -qm three', mdir)
+
+  reset_state()
+  edit(vim.fs.joinpath(mdir, 'base.txt'))
+  local res = virgil.review({ base = trunk, head = 'feature' })
+  eq('the review is what the branch changed', #res.files, 1)
+  eq('and not what the base branch moved on to', res.files[1].path, 'feature.txt')
+  eq('the old side is the commit they parted at', review.state.base_sha, parted_at)
+  eq('and the spec says three-dot', res.spec, trunk .. '...feature')
+  review.close()
+
+  -- a worktree review has no second commit to find a merge base with
+  write(mdir, 'base.txt', { 'a', 'b', 'c' })
+  reset_state()
+  edit(vim.fs.joinpath(mdir, 'base.txt'))
+  local w = virgil.review({ base = 'HEAD' })
+  eq('a worktree review stays two-dot', w.spec, 'HEAD..worktree')
   review.close()
 end
 

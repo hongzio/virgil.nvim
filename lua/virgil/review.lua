@@ -153,10 +153,12 @@ local function collect(repo, base, head, paths)
   return files
 end
 
+--- `...` when the diff was taken from the merge base, git's own notation for it.
 ---@param base string|nil
 ---@param head string|nil
-local function spec_of(base, head)
-  return ('%s..%s'):format(base or 'HEAD', head or 'worktree')
+---@param three_dot boolean|nil
+local function spec_of(base, head, three_dot)
+  return ('%s%s%s'):format(base or 'HEAD', three_dot and '...' or '..', head or 'worktree')
 end
 
 --- Start a review.
@@ -191,9 +193,20 @@ function M.start(opts)
     end
   end
 
-  local files = collect(repo, base, head, opts.paths)
+  -- A changeset is measured from where the two histories parted, not from the
+  -- tip of the base branch. Once the base moves on, a plain two-dot diff folds
+  -- the base's own new commits into the review backwards — files the change
+  -- never touched, shown as if this change reverted them. This is git's
+  -- `base...head`, and the diff a forge shows for a pull request.
+  local diff_base = base_sha
+  if head_sha then
+    diff_base = git.merge_base(repo, base_sha, head_sha) or base_sha
+  end
+  local spec = spec_of(base, head, head_sha ~= nil)
+
+  local files = collect(repo, diff_base, head, opts.paths)
   if #files == 0 then
-    util.notify(('no changes in %s'):format(spec_of(base, head)))
+    util.notify(('no changes in %s'):format(spec))
     return nil
   end
 
@@ -203,12 +216,12 @@ function M.start(opts)
 
   M.state = {
     repo = repo,
-    base = base,
-    head = head,
-    base_sha = base_sha,
+    base = base, -- as typed
+    head = head, -- as typed; nil is the working tree
+    base_sha = diff_base, -- the commit the old side is actually taken from
     head_sha = head_sha,
     paths = opts.paths,
-    spec = spec_of(base, head),
+    spec = spec,
     files = files,
     tabs = {},
   }
@@ -253,7 +266,7 @@ function M.open_file(path)
     return true
   end
 
-  local old_buf = M.blob_buf(st.repo, entry.old_sha, entry.old_path or entry.path, st.base, 'old', st.spec)
+  local old_buf = M.blob_buf(st.repo, entry.old_sha, entry.old_path or entry.path, st.base_sha, 'old', st.spec)
   local new_buf, is_file = new_side_buf(st.repo, entry, st.head, st.spec)
 
   vim.cmd('tabnew')
@@ -413,7 +426,8 @@ end
 ---@return table `{ spec, base_sha, head_sha }`
 function M.changeset_of(repo, spec)
   local out = { spec = spec }
-  local base, head = spec:match('^(.-)%.%.(.*)$')
+  -- `..` and `...` both parse; the separator is a label, the rule below is not
+  local base, head = spec:match('^(.-)%.%.%.?(.*)$')
   if not base then
     base, head = spec, nil
   end
@@ -425,6 +439,11 @@ function M.changeset_of(repo, spec)
   end
   if head then
     out.head_sha = git.rev_commit(repo, head)
+  end
+  -- same rule `start` uses, or a filter would name the base branch's tip while
+  -- the notes recorded the commit the two histories parted at
+  if out.base_sha and out.head_sha then
+    out.base_sha = git.merge_base(repo, out.base_sha, out.head_sha) or out.base_sha
   end
   return out
 end
