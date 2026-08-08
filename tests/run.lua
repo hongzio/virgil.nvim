@@ -811,6 +811,50 @@ do
   end, listed), 1)
 end
 
+section('pull requests')
+local fdir = new_repo('forge')
+do
+  vim.cmd('cd ' .. vim.fn.fnameescape(fdir))
+  write(fdir, 'a.txt', { 'one' })
+  sh('git add -A && git commit -qm one', fdir)
+  local trunk = sh('git rev-parse --abbrev-ref HEAD', fdir)
+  local head = sh('git rev-parse HEAD', fdir)
+  local repo = git.repo(fdir)
+  local forge = require('virgil.forge')
+
+  -- no remote at all, so nothing to ask gh about
+  reset_state()
+  check('a repo with no GitHub remote offers no pull requests', not forge.available(repo))
+  local kinds = vim.tbl_map(function(i)
+    return i.kind
+  end, review.candidates(repo))
+  check('and the row is not in the list', not vim.tbl_contains(kinds, 'pr'), vim.inspect(kinds))
+
+  sh('git remote add origin https://github.com/example/example.git', fdir)
+  git.clear_cache()
+  eq('a GitHub remote plus gh on PATH offers them', forge.available(repo), vim.fn.executable('gh') == 1)
+
+  -- a non-GitHub remote is not a forge virgil knows how to ask
+  sh('git remote set-url origin https://gitlab.com/example/example.git', fdir)
+  git.clear_cache()
+  check('a remote elsewhere does not', not forge.available(repo))
+
+  -- the revisions a pull request is reviewed between
+  sh('git remote set-url origin https://github.com/example/example.git', fdir)
+  sh('git update-ref refs/remotes/origin/' .. trunk .. ' ' .. head, fdir)
+  git.clear_cache()
+  local pr = { number = 7, baseRefName = trunk, headRefOid = head }
+  local base, h = forge.revisions(repo, pr)
+  eq('the base is the remote-tracking branch when there is one', base, 'origin/' .. trunk)
+  eq('and the head is the sha, not the branch name', h, head)
+  sh('git update-ref -d refs/remotes/origin/' .. trunk, fdir)
+  git.clear_cache()
+  eq('falling back to the plain name when there is not', (forge.revisions(repo, pr)), trunk)
+
+  check('a head already in the clone needs no fetch', forge.have_head(repo, pr))
+  check('one that is not does', not forge.have_head(repo, { headRefOid = string.rep('a', 40) }))
+end
+
 section('file list sidebar')
 local bdir = new_repo('sidebar')
 do
