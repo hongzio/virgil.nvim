@@ -68,26 +68,43 @@ jump works.
 
 ### Keymaps
 
-No default keymaps are installed; only `<Plug>` mappings are provided. Suggested:
+No default keymaps are installed. `<Plug>` mappings exist for the things that act on a
+note; everything else is a `:Virgil` subcommand and maps just as well. One prefix for the
+lot, and the pairs on brackets:
 
 ```lua
-vim.keymap.set({ 'n', 'x' }, '<localleader>n', '<Plug>(virgil-note)')
-vim.keymap.set('n', ']n', '<Plug>(virgil-next-note)')
-vim.keymap.set('n', '[n', '<Plug>(virgil-prev-note)')
-vim.keymap.set('n', '<localleader>x', '<Plug>(virgil-remove)')
-vim.keymap.set('n', '<localleader>t', '<Plug>(virgil-toggle)')
-vim.keymap.set('n', ']f', '<Plug>(virgil-next-file)')
-vim.keymap.set('n', '[f', '<Plug>(virgil-prev-file)')
-vim.keymap.set('n', '<localleader>s', '<Plug>(virgil-sidebar)')
+local map = vim.keymap.set
+
+map({ 'n', 'x' }, '<leader>vv', '<Plug>(virgil-note)',    { desc = 'Virgil note' })
+map('n', '<leader>vx', '<Plug>(virgil-remove)',           { desc = 'Virgil delete note at cursor' })
+map('n', '<leader>vt', '<Plug>(virgil-toggle)',           { desc = 'Virgil toggle visibility' })
+map('n', '<leader>vl', '<Cmd>Virgil notes<CR>',           { desc = 'Virgil list notes' })
+
+map('n', '<leader>vd', '<Cmd>Virgil review<CR>',          { desc = 'Virgil pick a changeset' })
+map('n', '<leader>vR', '<Cmd>Virgil review HEAD<CR>',     { desc = 'Virgil review worktree' })
+map('n', '<leader>vf', '<Cmd>Virgil files<CR>',           { desc = 'Virgil changed files' })
+map('n', '<leader>vs', '<Cmd>Virgil sidebar<CR>',         { desc = 'Virgil toggle file list' })
+map('n', '<leader>vq', '<Cmd>Virgil quit<CR>',            { desc = 'Virgil close review tabs' })
+
+map('n', ']n', '<Plug>(virgil-next-note)',                { desc = 'Next virgil note' })
+map('n', '[n', '<Plug>(virgil-prev-note)',                { desc = 'Prev virgil note' })
+map('n', ']v', '<Plug>(virgil-next-file)',                { desc = 'Next virgil review file' })
+map('n', '[v', '<Plug>(virgil-prev-file)',                { desc = 'Prev virgil review file' })
 ```
+
+Two things worth stealing from that, whatever prefix you settle on. `<leader>vR` passes
+`HEAD` explicitly, because a bare `:Virgil review` now opens the picker rather than the
+working tree. And review's file cycling sits on `]v` / `[v` rather than the more obvious
+`]f` / `[f`, which nvim-treesitter's textobjects already claim for function motions.
 
 Hunk navigation uses diff mode's built-in `]c` / `[c` as-is.
 
 ### Review
 
 `:Virgil review origin/main` spreads a changeset into per-file diff tabs. Tabs are created
-on visit — a 200-file review does not open 200 tabs up front. `]f` / `[f` move between
-files, `:Virgil files` picks any file directly, and `:Virgil quit` cleans everything up.
+on visit — a 200-file review does not open 200 tabs up front. `<Plug>(virgil-next-file)`
+and its pair move between files, `:Virgil files` picks any file directly, and
+`:Virgil quit` cleans everything up.
 
 `:Virgil sidebar` puts the whole changeset beside the diff, one row per file:
 
