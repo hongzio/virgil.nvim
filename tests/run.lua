@@ -127,6 +127,28 @@ do
   eq('no hunks at all is identity', (project.map_line(nil, 42)), 42)
 end
 
+section('column fitting')
+do
+  local dw = vim.fn.strdisplaywidth
+  eq('a short string is padded to the column', util.fit('ab', 6), 'ab    ')
+  eq('one that already fits exactly is untouched', util.fit('abcdef', 6), 'abcdef')
+  eq('a long one is cut and marked', util.fit('abcdefgh', 6), 'abcde…')
+
+  -- the point: wide characters are two cells each, so cutting by character
+  -- count would hand back a string twice as wide as the column
+  eq('a wide string still occupies exactly the column', dw(util.fit('가나다라마바사', 6)), 6)
+  -- two wide characters and the ellipsis are 5 of the 6 cells; a third would
+  -- overrun, so the cell it cannot fill is padded instead
+  eq('and is cut by cells, not characters', util.fit('가나다라마바사', 6), '가나… ')
+  eq('a column a wide character fills exactly needs no padding', util.fit('가나다라', 5), '가나…')
+  eq('mixed width counts the same way', dw(util.fit('ab가나다', 6)), 6)
+
+  -- every column this feeds is fixed width, whatever lands in it
+  for _, s in ipairs({ '', 'x', '가', 'a가b나c', string.rep('가', 40), string.rep('x', 80) }) do
+    eq(('%q fills its column'):format(s), dw(util.fit(s, 12)), 12)
+  end
+end
+
 section('fallback search')
 do
   local a = {

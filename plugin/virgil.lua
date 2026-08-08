@@ -43,16 +43,11 @@ local function notify(msg, level)
   vim.notify('virgil: ' .. msg, level or vim.log.levels.INFO, { title = 'virgil' })
 end
 
---- Pad or truncate to `w` display cells, so a column stays a column.
-local function fit(s, w)
-  local width = vim.fn.strdisplaywidth(s)
-  return width <= w and s .. string.rep(' ', w - width) or (vim.fn.strcharpart(s, 0, w - 1) .. '…')
-end
-
 --- The second step of the changeset picker. Reached only by choosing the pull
 --- request row, so the network call is never one the human did not ask for.
 local function pick_pull_request(repo)
   local forge = require('virgil.forge')
+  local fit = require('virgil.util').fit
   notify('asking gh for pull requests…')
   forge.pull_requests(repo, function(prs, err)
     if err then
@@ -146,6 +141,7 @@ local subcommands = {
       return
     end
     local git = require('virgil.git')
+    local fit = require('virgil.util').fit
     local repo = git.repo(vim.api.nvim_buf_get_name(0)) or git.repo(vim.uv.cwd())
     if not repo then
       vim.notify('virgil: not inside a git repository', vim.log.levels.ERROR, { title = 'virgil' })

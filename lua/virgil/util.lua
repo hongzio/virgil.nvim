@@ -102,6 +102,32 @@ function M.lines_text(lines)
   return table.concat(lines, '\n') .. '\n'
 end
 
+--- Pad or truncate `s` to exactly `w` display cells, so a column stays a column.
+---
+--- Both ends are measured in cells. Cutting `w - 1` *characters* instead would
+--- overrun by up to double on anything wide — a CJK title is one character and
+--- two cells each — and the column after this one would start in the wrong
+--- place. The ellipsis is one cell, and what a wide character leaves behind
+--- when it does not fit is padding.
+---@param s string
+---@param w integer
+---@return string
+function M.fit(s, w)
+  local width = vim.fn.strdisplaywidth(s)
+  if width <= w then
+    return s .. string.rep(' ', w - width)
+  end
+  local kept, used = 0, 0
+  for i = 0, vim.fn.strchars(s) - 1 do
+    local cw = vim.fn.strdisplaywidth(vim.fn.strcharpart(s, i, 1))
+    if used + cw > w - 1 then
+      break
+    end
+    kept, used = kept + 1, used + cw
+  end
+  return vim.fn.strcharpart(s, 0, kept) .. '…' .. string.rep(' ', w - used - 1)
+end
+
 --- Wrap `text` to `width` display cells, keeping each paragraph's indent.
 ---@param text string
 ---@param width integer
