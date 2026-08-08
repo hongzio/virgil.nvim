@@ -162,7 +162,11 @@ local function spec_of(base, head, three_dot)
 end
 
 --- Start reviewing a changeset.
----@param opts table `{ base, head, paths, repo }`
+---@param opts table `{ base, head, paths, repo, title }`
+--- `title` is a human-readable name for this changeset — a pull request's
+--- `#7 fix the retry loop` rather than the two revisions it resolves to. It is
+--- recorded on the notes written here and shown when they are offered back,
+--- and takes no part in identifying the changeset.
 ---@return table|nil state
 function M.start(opts)
   opts = opts or {}
@@ -222,6 +226,7 @@ function M.start(opts)
     head_sha = head_sha,
     paths = opts.paths,
     spec = spec,
+    title = opts.title,
     files = files,
     tabs = {},
   }
@@ -452,6 +457,7 @@ function M.open_file(path)
   M.tabs[tab] = {
     path = path,
     spec = st.spec,
+    title = st.title,
     base = st.base,
     head = st.head,
     base_sha = st.base_sha,
@@ -513,6 +519,7 @@ function M.context_for_buf(buf)
       if side then
         return {
           spec = data.spec,
+          title = data.title,
           side = side,
           path = data.path,
           base = data.base,
@@ -588,6 +595,12 @@ function M.candidates(repo)
       if not seen[key] then
         seen[key] = { kind = 'notes', label = c.changeset or key, base = c.base, head = c.head, count = 0 }
         table.insert(changesets, seen[key])
+      end
+      -- a name beats the spelling of two revisions wherever in the group it
+      -- turns up, so re-opening a changeset and leaving one more note cannot
+      -- rename the row back to a pair of shas
+      if c.title and not seen[key].title then
+        seen[key].label, seen[key].title = c.title, c.title
       end
       seen[key].count = seen[key].count + 1
     end

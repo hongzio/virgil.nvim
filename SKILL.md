@@ -159,7 +159,7 @@ Notes written while a changeset is open record their origin automatically:
 
 ```json
 {"changeset": "origin/main..pr-1", "base": "9f3c1ab…", "base_ref": "origin/main",
- "head": "abc1234…", "head_ref": "pr-1",
+ "head": "abc1234…", "head_ref": "pr-1", "title": "#7 fix the retry loop",
  "hunk_header": "@@ -6,2 +6,2 @@ func mint(id int) string {"}
 ```
 
@@ -168,6 +168,12 @@ the time. Refs move, so only the commits identify the changeset later — `head`
 when the changeset was against the working tree. `notes({'changeset': …})` accepts either
 spelling and matches on commits, so `origin/main..pr-1` finds notes recorded as
 `main..abc1234`.
+
+`title` is present when the changeset was opened with a name — pass one yourself with
+`review({'base': …, 'head': …, 'title': '#7 fix the retry loop'})` whenever you know what
+the change is called. It is what the human's changeset picker offers your notes back under,
+and two revisions on their own do not say which pull request they came out of. It is
+display only: nothing matches on it.
 
 This **takes no part in position calculation.** It only records which change the note came
 out of, and it is what lets a human reopen that changeset later.

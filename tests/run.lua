@@ -727,6 +727,74 @@ do
   changeset.close()
 end
 
+section('changeset title')
+local tdir = new_repo('title')
+do
+  vim.cmd('cd ' .. vim.fn.fnameescape(tdir))
+  write(tdir, 'a.txt', { 'one', 'two', 'three' })
+  sh('git add -A && git commit -qm one', tdir)
+  local c1 = sh('git rev-parse HEAD', tdir)
+  write(tdir, 'a.txt', { 'one', 'TWO', 'three' })
+  sh('git add -A && git commit -qm two', tdir)
+  local c2 = sh('git rev-parse HEAD', tdir)
+  local repo = git.repo(tdir)
+
+  -- a name carried from the picker down to the note: state, tab, context
+  reset_state()
+  edit(vim.fs.joinpath(tdir, 'a.txt'))
+  local res = virgil.review({ base = c1, head = c2, title = '#7 fix the retry loop' })
+  eq('review() reports the title back', res.title, '#7 fix the retry loop')
+  eq('and the open changeset carries it', changeset.state.title, '#7 fix the retry loop')
+  local d = changeset.tabs[vim.api.nvim_get_current_tabpage()]
+  eq('so does the tab', d.title, '#7 fix the retry loop')
+  eq('and the buffer context read back off it', changeset.context_for_buf(d.right_buf).title, '#7 fix the retry loop')
+  vim.api.nvim_set_current_win(d.right)
+  local titled = virgil.note({ line = 2, summary = 'in a named changeset' })
+  eq('a note written there records the name', titled.context.title, '#7 fix the retry loop')
+  eq('status() reports it too', virgil.status().changeset.title, '#7 fix the retry loop')
+
+  -- the name is decoration: identity is still the two commits
+  check('a title takes no part in matching', changeset.same_changeset(titled.context, changeset.state))
+  eq('and a filter still works off commits', #virgil.notes({ changeset = c1 .. '..' .. c2 }), 1)
+  changeset.close()
+
+  -- reopened without one, a further note has no title of its own
+  reset_state()
+  edit(vim.fs.joinpath(tdir, 'a.txt'))
+  virgil.review({ base = c1, head = c2 })
+  local d2 = changeset.tabs[vim.api.nvim_get_current_tabpage()]
+  vim.api.nvim_set_current_win(d2.right)
+  local untitled = virgil.note({ line = 3, summary = 'after reopening' })
+  eq('a changeset opened with no title records none', untitled.context.title, nil)
+  changeset.close()
+
+  -- ...but the row keeps the name, wherever in the group it sits
+  reset_state()
+  local rows = vim.tbl_filter(function(i)
+    return i.kind == 'notes'
+  end, changeset.candidates(repo))
+  eq('both notes are one row', #rows, 1)
+  eq('labelled by the note that had a name', rows[1].label, '#7 fix the retry loop')
+  eq('and the row offers it back for the next note', rows[1].title, '#7 fix the retry loop')
+
+  -- a group nobody named falls back to the spelling of its revisions
+  store.add(repo, {
+    anchor = { kind = 'blob', blob = titled.anchor.blob, path = 'a.txt', line = 1, end_line = 1, text = 'one' },
+    author = 't',
+    summary = 'nameless',
+    rationale = '',
+    status = 'open',
+    created_at = util.now(),
+    context = { changeset = 'HEAD..worktree', base = c2 },
+  })
+  reset_state()
+  local nameless = vim.tbl_filter(function(i)
+    return i.kind == 'notes' and i.base == c2
+  end, changeset.candidates(repo))
+  eq('an unnamed group is labelled by its spec', nameless[1].label, 'HEAD..worktree')
+  check('and offers no title to promote', nameless[1].title == nil, tostring(nameless[1].title))
+end
+
 section('merge base')
 local mdir = new_repo('mergebase')
 do

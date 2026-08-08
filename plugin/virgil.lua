@@ -73,8 +73,11 @@ local function pick_pull_request(repo)
         return
       end
       local base, head = forge.revisions(repo, pr)
+      -- the number first, so it survives being truncated into a column later:
+      -- two revisions do not say which pull request they came out of
+      local title = ('#%d %s'):format(pr.number, pr.title)
       local function open()
-        require('virgil').review({ base = base, head = head })
+        require('virgil').review({ base = base, head = head, title = title })
       end
       if forge.have_head(repo, pr) then
         open()
@@ -174,7 +177,9 @@ local subcommands = {
         pick_pull_request(repo)
         return
       end
-      require('virgil').review({ base = choice.base, head = choice.head })
+      -- `title` only where the row carries a real one; a row labelled with its
+      -- own spec must not have that spelling promoted into a name
+      require('virgil').review({ base = choice.base, head = choice.head, title = choice.title })
     end)
   end,
   files = function()

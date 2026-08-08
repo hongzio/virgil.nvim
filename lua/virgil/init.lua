@@ -140,6 +140,7 @@ function M.status()
   if changeset.state then
     out.changeset = {
       spec = changeset.state.spec,
+      title = changeset.state.title or '',
       base = changeset.state.base,
       head = changeset.state.head or '',
       base_sha = changeset.state.base_sha or '',
@@ -183,6 +184,11 @@ function M.note(opts)
       -- actually meant. Refs move and `HEAD` moves, so the label alone cannot
       -- name this changeset again tomorrow.
       context = { changeset = rc.spec, base = rc.base_sha, head = rc.head_sha }
+      -- what a human calls this changeset, when it has a name of its own. Like
+      -- `hunk_header`, it is written down and read back out; nothing matches on it
+      if rc.title and rc.title ~= '' then
+        context.title = rc.title
+      end
       if rc.base ~= rc.base_sha then
         context.base_ref = rc.base
       end
@@ -406,7 +412,7 @@ function M.toggle(mode)
 end
 
 --- Open a changeset as diff tabs.
----@param opts table|nil `{ base, head, paths }`
+---@param opts table|nil `{ base, head, paths, title }`
 ---@return table|nil
 function M.review(opts)
   opts = opts or {}
@@ -414,6 +420,7 @@ function M.review(opts)
     base = opts.base,
     head = opts.head,
     paths = opts.paths,
+    title = opts.title,
     repo = current_repo(),
   })
   if not st then
@@ -421,6 +428,7 @@ function M.review(opts)
   end
   return {
     spec = st.spec,
+    title = st.title or '',
     base = st.base,
     head = st.head or '',
     files = changeset.files(),

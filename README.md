@@ -172,6 +172,14 @@ therefore one changeset however they were spelled, which is what `notes({ change
 matches on and what decides whether a note is drawn as this screen's own or as background.
 None of it takes part in position calculation; that is the anchor's job alone.
 
+A changeset can also carry a `title` — a name of its own, rather than the two revisions it
+resolves to. Choosing a pull request sets one (`#7 fix the retry loop`), and
+`virgil.review({ base, head, title })` takes one from an agent. It is written onto the notes
+made there and is what the picker offers them back under, so a pull request you left notes
+on is findable by its number rather than by a sha you would have to recognise. Like the
+hunk header, it is written down and read back out: nothing matches on it, and a changeset
+nobody named is still offered under its spec.
+
 One changeset per instance. Starting a new one tears down the previous changeset's tabs.
 
 ## Agents
@@ -253,7 +261,7 @@ virgil.remove(id)                  -- delete; nothing else in virgil destroys a 
                                    -- id also accepts a { id1, id2 } list. Omit it for the note under the cursor
 virgil.next_note() / virgil.prev_note()
 virgil.toggle('all')
-virgil.review({ base = 'origin/main', head = nil, paths = { 'internal/' } })
+virgil.review({ base = 'origin/main', head = nil, paths = { 'internal/' }, title = '#7 retry loop' })
 virgil.files()
 virgil.export({ format = 'agent-context', changeset = '…', out = '/path.json' })
 virgil.import({ file = '/path.json' })
