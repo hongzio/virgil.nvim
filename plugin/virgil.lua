@@ -69,15 +69,6 @@ local subcommands = {
     end
     require('virgil.ui').pick(build, { title = 'virgil notes' })
   end,
-  keep = function(args)
-    require('virgil').keep(args[1])
-  end,
-  resolve = function(args)
-    require('virgil').resolve(args[1])
-  end,
-  unresolve = function(args)
-    require('virgil').unresolve(args[1])
-  end,
   remove = function(args)
     require('virgil').remove(args[1])
   end,
@@ -244,11 +235,9 @@ local plugs = {
   ['<Plug>(virgil-prev-note)'] = function()
     require('virgil').prev_note()
   end,
-  ['<Plug>(virgil-resolve)'] = function()
-    require('virgil').resolve()
-  end,
-  ['<Plug>(virgil-keep)'] = function()
-    require('virgil').keep()
+  -- the note at the cursor, and irreversibly: nothing else in virgil destroys one
+  ['<Plug>(virgil-remove)'] = function()
+    require('virgil').remove()
   end,
   ['<Plug>(virgil-toggle)'] = function()
     require('virgil').toggle()

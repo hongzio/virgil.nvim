@@ -170,8 +170,7 @@ spelling and matches on commits, so `origin/main..pr-1` finds notes recorded as
 `main..abc1234`.
 
 This **takes no part in position calculation.** It only records which change the note came
-out of. To turn a note into a permanent one unrelated to the review, break that link with
-`keep(id)`.
+out of, and it is what lets a human reopen that changeset later.
 
 ## 8. Check existing notes first
 
@@ -185,21 +184,19 @@ nvim --server "$SOCK" --remote-expr "json_encode(v:lua.require'virgil'.notes({'p
 Each entry carries the stored `anchor` plus a `projected` position for the current view:
 
 - `projected.status == "ok"` — sitting exactly on its line
-- `"stale"` — the line changed after the note was written. Time to re-read it and `update` or `resolve`
+- `"stale"` — the line changed after the note was written. Time to re-read it and `update` or `remove`
 - `"orphan"` — the anchored content can't be found (an abandoned commit, say)
 - No `projected` at all means that content isn't in the current view (a deleted line, for instance)
 
-## 9. Amending and closing
+## 9. Amending and deleting
 
 ```bash
 … .update('n-abc', {'summary': '…', 'rationale': '…'})   # reword
-… .resolve('n-abc')      # handled → hidden from the default view. The record stays
-… .unresolve('n-abc')
-… .keep('n-abc')         # break the review-origin link, making it permanent
 … .remove('n-abc')       # delete. Irreversible — only remove what you created
 ```
 
-`resolve`/`unresolve`/`remove`/`keep` also take id lists: `resolve(['n-a', 'n-b'])`.
+Both take id lists too: `remove(['n-a', 'n-b'])`. A note that no longer holds is deleted
+or reworded; there is no closed state for virgil to put it in.
 
 ## 10. Moving the human's screen
 

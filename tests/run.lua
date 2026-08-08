@@ -286,34 +286,31 @@ do
   vim.o.columns = columns
 end
 
-section('note lifecycle')
+section('removing notes')
 do
   local repo = git.repo(dir)
   local note = store.all(repo)[1]
-  virgil.resolve(note.id)
-  eq('resolve', store.get(repo, note.id).status, 'resolved')
-  virgil.unresolve(note.id)
-  eq('unresolve', store.get(repo, note.id).status, 'open')
-
-  store.update(repo, note.id, { context = { review = 'a..b' } })
-  virgil.keep(note.id)
-  eq('keep cuts the review link', store.get(repo, note.id).context, nil)
-
   local before = #store.all(repo)
   virgil.remove(note.id)
   eq('remove', #store.all(repo), before - 1)
 
-  -- pickers select several rows at once, so the same calls take id lists
+  -- pickers select several rows at once, so it takes id lists too
   local a = virgil.note({ path = 'a.txt', line = 5, summary = 'batch one' })
   local b = virgil.note({ path = 'a.txt', line = 6, summary = 'batch two' })
-  virgil.resolve({ a.id, b.id })
-  eq('resolve takes a list', store.get(repo, a.id).status .. '/' .. store.get(repo, b.id).status, 'resolved/resolved')
-  virgil.unresolve({ a.id, b.id })
-  eq('so does unresolve', store.get(repo, a.id).status, 'open')
   local n = #store.all(repo)
   virgil.remove({ a.id, b.id })
-  eq('and remove', #store.all(repo), n - 2)
+  eq('and a list of them', #store.all(repo), n - 2)
   eq('a missing id is not fatal', virgil.remove({ 'n-nope' }), false)
+
+  -- with no id at all it takes the note the cursor is on, which is what the
+  -- keymap does
+  local buf = edit(vim.fs.joinpath(dir, 'a.txt'))
+  -- line 8 has no other note: two on one line is legal, and the nearest wins
+  local here = virgil.note({ path = 'a.txt', line = 8, summary = 'under the cursor' })
+  render.render(buf)
+  vim.api.nvim_win_set_cursor(0, { 8, 0 })
+  eq('no id means the note at the cursor', virgil.remove(), true)
+  check('which is the one that goes', store.get(repo, here.id) == nil)
 end
 
 section('visibility')
@@ -329,15 +326,18 @@ do
   render.render(buf)
   eq('toggle back shows them', #render.notes_in(buf), shown)
 
+  -- virgil no longer closes a note itself, but an imported one can arrive
+  -- closed, and "all" is how you see it
   local id = render.notes_in(buf)[1].id
-  virgil.resolve(id)
+  store.update(git.repo(dir), id, { status = 'resolved' })
+  render.refresh()
   render.render(buf)
-  eq('resolved notes drop out of the default view', #render.notes_in(buf), shown - 1)
+  eq('a closed note drops out of the default view', #render.notes_in(buf), shown - 1)
   virgil.toggle('all')
   render.render(buf)
-  eq('… and come back under "all"', #render.notes_in(buf), shown)
+  eq('… and comes back under "all"', #render.notes_in(buf), shown)
   virgil.toggle('default')
-  virgil.unresolve(id)
+  store.update(git.repo(dir), id, { status = 'open' })
 end
 
 ------------------------------------------------------------------ review view
