@@ -1,5 +1,4 @@
 # virgil.nvim
-
 A Neovim plugin for attaching notes to code. Reading code, reading a diff between two
 commits, reading changes you haven't committed yet — the same way of leaving a note works
 in all three. Notes live on disk, follow the code as it changes, and can be written and
@@ -110,6 +109,14 @@ would march over to the old side at once. Splitting sides also stops the moment 
 half leaves the screen: handing a note to a window nobody is looking at is
 indistinguishable from losing it.
 
+A note written inside a review records where it came from: the label you typed
+(`origin/main..pr-1`), and the two commits that label resolved to. Refs move — `HEAD` moves
+with every commit, a branch moves with every fetch — so the label alone cannot name that
+changeset again tomorrow, and only the commits can. Two reviews of the same commits are
+therefore one review however they were spelled, which is what `notes({ review = … })`
+matches on and what decides whether a note is drawn as this screen's own or as background.
+None of it takes part in position calculation; that is the anchor's job alone.
+
 One review per instance. Starting a new one tears down the previous review's tabs.
 
 ## Agents
@@ -136,7 +143,7 @@ nvim --server "$SOCK" --remote-expr "json_encode(v:lua.require'virgil'.notes({'s
 
 Wrapping a call in `json_encode()` turns any result into a single easily parsed line.
 
-The manual to hand an agent is [SKILL.md](SKILL.md) — finding the socket, quoting rules,
+Temna o hand an agent is [SKILL.md](SKILL.md) — finding the socket, quoting rules,
 and what is and isn't worth a note. For Claude Code you can mount it as a skill directly:
 
 ```sh

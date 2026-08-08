@@ -136,16 +136,18 @@ function M.status()
   }
   out.notes.total = #store.for_path(view.repo, view.path)
 
-  local spec, side, path = review.context_for_buf(buf)
+  local ctx = review.context_for_buf(buf)
   if review.state then
     out.review = {
       spec = review.state.spec,
       base = review.state.base,
       head = review.state.head or '',
+      base_sha = review.state.base_sha or '',
+      head_sha = review.state.head_sha or '',
       files = #review.state.files,
-      current = path or '',
-      side = side or '',
-      in_review = spec ~= nil,
+      current = ctx and ctx.path or '',
+      side = ctx and ctx.side or '',
+      in_review = ctx ~= nil,
     }
   end
   return out
@@ -170,14 +172,26 @@ function M.note(opts)
     line, end_line = end_line, line
   end
 
-  local spec, _, _ = review.context_for_buf(view.buf)
+  local rc = review.context_for_buf(view.buf)
   local author = opts.author or config.options.author or vim.env.USER or 'me'
 
   local function create(summary, rationale)
     local a = anchor.make(view, line, end_line)
     local context
-    if spec then
-      context = { review = spec }
+    if rc then
+      -- `review` is the label a human reads; `base`/`head` are the commits it
+      -- actually meant. Refs move and `HEAD` moves, so the label alone cannot
+      -- name this changeset again tomorrow.
+      context = { review = rc.spec, base = rc.base_sha, head = rc.head_sha }
+      if rc.base ~= rc.base_sha then
+        context.base_ref = rc.base
+      end
+      if rc.head and rc.head ~= rc.head_sha then
+        context.head_ref = rc.head
+      end
+      if rc.paths and #rc.paths > 0 then
+        context.paths = vim.deepcopy(rc.paths)
+      end
       local header = review.hunk_header(view.buf, line)
       if header then
         context.hunk_header = header
@@ -243,6 +257,8 @@ function M.notes(filter)
     path = git.rel(repo, path) or path
   end
   local notes = path and store.for_path(repo, path) or store.all(repo)
+  -- resolved once: a review filter names commits, not a string to match
+  local want = filter.review and review.changeset_of(repo, filter.review) or nil
   local out = {}
   for _, note in ipairs(notes) do
     local ok = true
@@ -252,11 +268,8 @@ function M.notes(filter)
     if filter.status and note.status ~= filter.status then
       ok = false
     end
-    if filter.review then
-      local r = note.context and note.context.review or nil
-      if r ~= filter.review then
-        ok = false
-      end
+    if want and not review.same_changeset(note.context, want) then
+      ok = false
     end
     if ok then
       local entry = vim.deepcopy(note)

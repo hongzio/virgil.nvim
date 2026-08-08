@@ -154,8 +154,16 @@ to start.
 Notes written while a review is open record their origin automatically:
 
 ```json
-{"review": "HEAD..worktree", "hunk_header": "@@ -6,2 +6,2 @@ func mint(id int) string {"}
+{"review": "origin/main..pr-1", "base": "9f3c1ab…", "base_ref": "origin/main",
+ "head": "abc1234…", "head_ref": "pr-1",
+ "hunk_header": "@@ -6,2 +6,2 @@ func mint(id int) string {"}
 ```
+
+`review` is the label a human reads; `base` and `head` are the commits it resolved to at
+the time. Refs move, so only the commits identify the changeset later — `head` is absent
+when the review was against the working tree. `notes({'review': …})` accepts either
+spelling and matches on commits, so `origin/main..pr-1` finds notes recorded as
+`main..abc1234`.
 
 This **takes no part in position calculation.** It only records which change the note came
 out of. To turn a note into a permanent one unrelated to the review, break that link with
