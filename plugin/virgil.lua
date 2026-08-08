@@ -84,8 +84,48 @@ local subcommands = {
   toggle = function(args)
     require('virgil').toggle(args[1])
   end,
+  -- With revisions, review them. With none, ask which changeset — the answer is
+  -- rarely the working tree once an agent has left notes somewhere else.
   review = function(args)
-    require('virgil').review({ base = args[1], head = args[2] })
+    if #args > 0 then
+      require('virgil').review({ base = args[1], head = args[2] })
+      return
+    end
+    local git = require('virgil.git')
+    local repo = git.repo(vim.api.nvim_buf_get_name(0)) or git.repo(vim.uv.cwd())
+    if not repo then
+      vim.notify('virgil: not inside a git repository', vim.log.levels.ERROR, { title = 'virgil' })
+      return
+    end
+    local items = require('virgil.review').candidates(repo)
+    if #items == 0 then
+      vim.notify('virgil: nothing to review', vim.log.levels.INFO, { title = 'virgil' })
+      return
+    end
+    table.insert(items, { kind = 'other', label = 'other revisions…', detail = 'type them out' })
+
+    local function fit(s, w)
+      return vim.fn.strdisplaywidth(s) <= w and s .. string.rep(' ', w - vim.fn.strdisplaywidth(s))
+        or (vim.fn.strcharpart(s, 0, w - 1) .. '…')
+    end
+    vim.ui.select(items, {
+      prompt = 'review',
+      format_item = function(it)
+        return ('%-9s %s  %s'):format(it.kind, fit(it.label, 52), it.detail or '')
+      end,
+    }, function(choice)
+      if not choice then
+        return
+      end
+      if choice.kind == 'other' then
+        -- hand it to the command line, where ref completion already works
+        vim.schedule(function()
+          vim.fn.feedkeys(':Virgil review ', 'n')
+        end)
+        return
+      end
+      require('virgil').review({ base = choice.base, head = choice.head })
+    end)
   end,
   files = function()
     local review = require('virgil.review')

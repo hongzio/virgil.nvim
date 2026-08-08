@@ -397,6 +397,80 @@ function M.sibling_buf(buf)
   return nil
 end
 
+--- Changesets worth reviewing, in the order you are most likely to want them:
+--- what is uncommitted, what you already left notes on, what this branch adds,
+--- then recent commits.
+---
+--- Pure data. The picker that shows these lives in the command layer, so
+--- nothing here blocks on a human — agents call `review()` with revisions.
+---@param repo table
+---@return table[] `{ kind, label, detail, base, head }`
+function M.candidates(repo)
+  local out = {}
+
+  local dirty = git.diff_numstat(repo, 'HEAD', nil, nil)
+  local n = vim.tbl_count(dirty)
+  if n > 0 then
+    table.insert(out, {
+      kind = 'worktree',
+      label = 'uncommitted changes',
+      detail = ('%d file%s'):format(n, n == 1 and '' or 's'),
+      base = 'HEAD',
+    })
+  end
+
+  -- reviews that already hold notes: the way back to what an agent left behind
+  local store = require('virgil.store')
+  local seen, reviews = {}, {}
+  for _, note in ipairs(store.all(repo)) do
+    local c = note.context
+    if c and c.base then
+      local key = c.base .. '|' .. (c.head or '')
+      if not seen[key] then
+        seen[key] = { kind = 'notes', label = c.review or key, base = c.base, head = c.head, count = 0 }
+        table.insert(reviews, seen[key])
+      end
+      seen[key].count = seen[key].count + 1
+    end
+  end
+  for _, r in ipairs(reviews) do
+    -- a changeset whose commits are gone would only fail at open time
+    local alive = git.rev_commit(repo, r.base) and (not r.head or git.rev_commit(repo, r.head))
+    if alive then
+      r.detail = ('%d note%s'):format(r.count, r.count == 1 and '' or 's')
+      r.count = nil
+      table.insert(out, r)
+    end
+  end
+
+  local upstream = git.upstream(repo)
+  if upstream then
+    local branch = git.branch(repo) or 'HEAD'
+    table.insert(out, {
+      kind = 'branch',
+      label = ('%s...%s'):format(upstream, branch),
+      detail = 'what this branch adds',
+      base = upstream,
+      head = branch,
+    })
+  end
+
+  for _, c in ipairs(git.log(repo, 10)) do
+    -- a root commit has no `^` to diff against
+    if #c.parents > 0 then
+      table.insert(out, {
+        kind = 'commit',
+        label = ('%s %s'):format(c.short, c.subject),
+        detail = ('%s · %s'):format(c.author, c.when),
+        base = c.sha .. '^',
+        head = c.sha,
+      })
+    end
+  end
+
+  return out
+end
+
 --- Does `context` name the same changeset as `other`?
 ---
 --- Two reviews of the same two commits are the same review even when they were

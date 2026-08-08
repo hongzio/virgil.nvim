@@ -377,6 +377,55 @@ function M.dirty_paths(repo)
   return dirty
 end
 
+--- Recent commits, newest first. Records are NUL-separated and fields are
+--- separated by US, neither of which can appear in a subject line.
+---@param repo table
+---@param n integer
+---@return table[] `{ sha, short, subject, author, when, parents }`
+function M.log(repo, n)
+  local out = M.exec(repo, {
+    'log',
+    '-z',
+    '-n',
+    tostring(n),
+    '--format=%H%x1f%h%x1f%s%x1f%an%x1f%ar%x1f%P',
+  })
+  if not out then
+    return {}
+  end
+  local commits = {}
+  for _, rec in ipairs(vim.split(out, '\0', { plain = true })) do
+    local f = vim.split(rec, '\31', { plain = true })
+    if f[1] and f[1] ~= '' then
+      table.insert(commits, {
+        sha = f[1],
+        short = f[2] or '',
+        subject = f[3] or '',
+        author = f[4] or '',
+        when = f[5] or '',
+        parents = vim.split(f[6] or '', ' ', { trimempty = true }),
+      })
+    end
+  end
+  return commits
+end
+
+--- The branch HEAD is on, or nil when detached.
+---@param repo table
+---@return string|nil
+function M.branch(repo)
+  local out = M.exec(repo, { 'symbolic-ref', '--quiet', '--short', 'HEAD' })
+  return out and vim.trim(out) ~= '' and vim.trim(out) or nil
+end
+
+--- The branch the current one tracks, if it tracks one.
+---@param repo table
+---@return string|nil
+function M.upstream(repo)
+  local out = M.exec(repo, { 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}' })
+  return out and vim.trim(out) ~= '' and vim.trim(out) or nil
+end
+
 --- Branch/tag names, for command completion.
 ---@param repo table
 ---@return string[]
