@@ -37,6 +37,10 @@ M.defaults = {
     --- tries to attach to a buffer that has no file behind it.
     --- 'filetype' sets it anyway; false leaves the buffer plain.
     highlight = 'syntax', -- 'syntax' | 'filetype' | false
+    --- Open the changed-file list beside every review tab. Off by default;
+    --- `:Virgil sidebar` toggles it, and the toggle outlives one review.
+    sidebar = false,
+    sidebar_width = 40,
   },
 
   socket = {

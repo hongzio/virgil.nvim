@@ -179,6 +179,14 @@ local subcommands = {
       print(sock)
     end
   end,
+  sidebar = function()
+    local review = require('virgil.review')
+    if not review.state then
+      vim.notify('virgil: no review is open', vim.log.levels.WARN, { title = 'virgil' })
+      return
+    end
+    review.sidebar_toggle()
+  end,
   quit = function()
     require('virgil.review').close()
   end,
@@ -245,6 +253,9 @@ local plugs = {
   ['<Plug>(virgil-toggle)'] = function()
     require('virgil').toggle()
   end,
+  ['<Plug>(virgil-sidebar)'] = function()
+    subcommands.sidebar({})
+  end,
   ['<Plug>(virgil-next-file)'] = function()
     require('virgil.review').cycle_file(1)
   end,
@@ -287,6 +298,18 @@ vim.api.nvim_create_autocmd({ 'TextChanged', 'InsertLeave' }, {
   group = group,
   callback = function(ev)
     lazy_render().schedule(ev.buf)
+  end,
+})
+
+-- the file list follows you between a review's tabs; what changes is which row
+-- is marked current
+vim.api.nvim_create_autocmd('TabEnter', {
+  group = group,
+  callback = function()
+    local ok, review = pcall(require, 'virgil.review')
+    if ok and review.state then
+      review.sidebar_sync()
+    end
   end,
 })
 

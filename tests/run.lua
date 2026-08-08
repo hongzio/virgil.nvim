@@ -811,6 +811,81 @@ do
   end, listed), 1)
 end
 
+section('file list sidebar')
+local bdir = new_repo('sidebar')
+do
+  vim.cmd('cd ' .. vim.fn.fnameescape(bdir))
+  write(bdir, 'alpha.txt', { 'one' })
+  write(bdir, 'beta.txt', { 'one' })
+  sh('git add -A && git commit -qm one', bdir)
+  write(bdir, 'alpha.txt', { 'two' })
+  write(bdir, 'beta.txt', { 'two' })
+
+  reset_state()
+  edit(vim.fs.joinpath(bdir, 'alpha.txt'))
+  virgil.review({ base = 'HEAD' })
+
+  local function sidebar_win(tab)
+    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+      if vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(w)):find('review/files', 1, true) then
+        return w
+      end
+    end
+  end
+  local tab = vim.api.nvim_get_current_tabpage()
+  eq('a review tab is two windows', #vim.api.nvim_tabpage_list_wins(tab), 2)
+  check('the list is off until asked for', sidebar_win(tab) == nil)
+
+  local columns = vim.o.columns
+  vim.o.columns = 200
+  eq('toggling turns it on', review.sidebar_toggle(), true)
+  local sb = sidebar_win(tab)
+  check('which adds a window', sb ~= nil)
+  eq('outside the diff', vim.wo[sb].diff, false)
+  eq('at the configured width', vim.api.nvim_win_get_width(sb), 40)
+
+  -- a vsplit takes its width out of the current window alone, so without a
+  -- rebalance the two halves of the diff came out lopsided — and again in
+  -- every tab opened after
+  local function diff_widths(t)
+    local out = {}
+    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(t)) do
+      if w ~= sidebar_win(t) then
+        table.insert(out, vim.api.nvim_win_get_width(w))
+      end
+    end
+    return out
+  end
+  local w1 = diff_widths(tab)
+  check('the diff halves stay even', math.abs(w1[1] - w1[2]) <= 1, vim.inspect(w1))
+
+  local buf = vim.api.nvim_win_get_buf(sb)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  eq('a row per changed file', #lines, 2)
+  check('the file you are on is marked', vim.startswith(lines[1], '▸'), lines[1])
+  check('and the others are not', not vim.startswith(lines[2], '▸'), lines[2])
+  eq('every row is one column wide', vim.fn.strdisplaywidth(lines[1]), vim.fn.strdisplaywidth(lines[2]))
+
+  -- open the second file from the list
+  vim.api.nvim_set_current_win(sb)
+  vim.api.nvim_win_set_cursor(sb, { 2, 0 })
+  review.sidebar_open_under_cursor()
+  local tab2 = vim.api.nvim_get_current_tabpage()
+  eq('choosing a row opens that file', vim.t[tab2].virgil_review, 'beta.txt')
+  check('the new tab gets a list too', sidebar_win(tab2) ~= nil)
+  local w2 = diff_widths(tab2)
+  check('and its diff halves are even as well', math.abs(w2[1] - w2[2]) <= 1, vim.inspect(w2))
+  vim.o.columns = columns
+  local moved = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  check('and the mark follows', vim.startswith(moved[2], '▸'), table.concat(moved, ' / '))
+  check('one buffer, shown in both tabs', vim.api.nvim_win_get_buf(sidebar_win(tab)) == buf)
+
+  eq('toggling turns it off', review.sidebar_toggle(), false)
+  check('in the tab you are in', sidebar_win(tab2) == nil)
+  check('and in the ones you are not', sidebar_win(tab) == nil, 'a stranded list reads as a failed toggle')
+  review.close()
+end
+
 --------------------------------------------------------------------- summary
 
 io.write(('\n%d passed, %d failed\n'):format(passed, #failures))
