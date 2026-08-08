@@ -30,7 +30,8 @@ Calling `setup()` is optional. The defaults work on their own.
 
 Requires Neovim 0.10+ (0.12 recommended — its default `diffopt` is
 `inline:char,linematch:40`) and git. There are no hard dependencies: `fzf-lua` /
-`snacks.nvim` are used as the picker if present, otherwise it falls back to quickfix.
+`snacks.nvim` are used as the picker if present, otherwise it falls back to quickfix, and
+`gh` adds pull requests to the review picker if you happen to have it.
 
 ## Usage
 
@@ -110,6 +111,14 @@ against their parents. The middle one is the point — after an agent leaves not
 changeset, that changeset is a list entry rather than a pair of revisions you have to
 remember. The last row hands you the command line, where ref completion already works. It
 is `vim.ui.select`, so whatever picker you have configured is the one you get.
+
+Where `gh` is installed and the repository has a GitHub remote, one more row opens the
+list of pull requests. It is a row you choose rather than one the list waits for: asking
+`gh` is a network call, and the other rows should not be held up by it. Picking a pull
+request reviews it between its base branch and its head **commit** — a head branch name
+only means something in the fork it lives in. If that commit is not in the clone yet,
+virgil asks before fetching `pull/N/head`; nothing reaches the network without being
+chosen. Neither `gh` nor GitHub is a dependency — without them the row is simply absent.
 
 With two commits the diff is taken from where their histories parted, git's
 `base...head` — the same range a forge shows for a pull request, and what the review spec

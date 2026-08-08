@@ -39,6 +39,69 @@ vim.api.nvim_create_autocmd('ColorScheme', { group = group, callback = set_highl
 
 ----------------------------------------------------------------------- commands
 
+local function notify(msg, level)
+  vim.notify('virgil: ' .. msg, level or vim.log.levels.INFO, { title = 'virgil' })
+end
+
+--- Pad or truncate to `w` display cells, so a column stays a column.
+local function fit(s, w)
+  local width = vim.fn.strdisplaywidth(s)
+  return width <= w and s .. string.rep(' ', w - width) or (vim.fn.strcharpart(s, 0, w - 1) .. '…')
+end
+
+--- The second step of the changeset picker. Reached only by choosing the pull
+--- request row, so the network call is never one the human did not ask for.
+local function pick_pull_request(repo)
+  local forge = require('virgil.forge')
+  notify('asking gh for pull requests…')
+  forge.pull_requests(repo, function(prs, err)
+    if err then
+      notify(err, vim.log.levels.ERROR)
+      return
+    end
+    if #prs == 0 then
+      notify('no open pull requests')
+      return
+    end
+    vim.ui.select(prs, {
+      prompt = 'pull requests',
+      format_item = function(pr)
+        return ('#%-5d %s  %s%s'):format(
+          pr.number,
+          fit(pr.title, 52),
+          pr.author and pr.author.login or '?',
+          pr.isDraft and '  draft' or ''
+        )
+      end,
+    }, function(pr)
+      if not pr then
+        return
+      end
+      local base, head = forge.revisions(repo, pr)
+      local function open()
+        require('virgil').review({ base = base, head = head })
+      end
+      if forge.have_head(repo, pr) then
+        open()
+        return
+      end
+      -- a clone that never saw the branch does not have the sha gh named
+      local ask = ('#%d is not in this clone yet.\nFetch pull/%d/head from origin?'):format(pr.number, pr.number)
+      if vim.fn.confirm(ask, '&Yes\n&No', 1) ~= 1 then
+        return
+      end
+      notify(('fetching pull/%d/head…'):format(pr.number))
+      forge.fetch_head(repo, pr, function(ok, ferr)
+        if not ok then
+          notify(ferr or 'fetch failed', vim.log.levels.ERROR)
+          return
+        end
+        open()
+      end)
+    end)
+  end)
+end
+
 local subcommands = {
   note = function(_, range)
     require('virgil').note(range and { line = range[1], end_line = range[2] } or {})
@@ -95,10 +158,6 @@ local subcommands = {
     end
     table.insert(items, { kind = 'other', label = 'other revisions…', detail = 'type them out' })
 
-    local function fit(s, w)
-      return vim.fn.strdisplaywidth(s) <= w and s .. string.rep(' ', w - vim.fn.strdisplaywidth(s))
-        or (vim.fn.strcharpart(s, 0, w - 1) .. '…')
-    end
     vim.ui.select(items, {
       prompt = 'review',
       format_item = function(it)
@@ -113,6 +172,10 @@ local subcommands = {
         vim.schedule(function()
           vim.fn.feedkeys(':Virgil review ', 'n')
         end)
+        return
+      end
+      if choice.kind == 'pr' then
+        pick_pull_request(repo)
         return
       end
       require('virgil').review({ base = choice.base, head = choice.head })

@@ -614,6 +614,12 @@ function M.candidates(repo)
     })
   end
 
+  -- asking gh costs a network round trip, so it is a row you choose, not one
+  -- the list waits for
+  if require('virgil.forge').available(repo) then
+    table.insert(out, { kind = 'pr', label = 'pull requests…', detail = 'ask gh' })
+  end
+
   for _, c in ipairs(git.log(repo, 10)) do
     -- a root commit has no `^` to diff against
     if #c.parents > 0 then
