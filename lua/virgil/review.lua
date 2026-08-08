@@ -332,16 +332,24 @@ function M.context_for_buf(buf)
 end
 
 --- The other half of the diff pair `buf` belongs to, if any.
+---
+--- Only while that half is actually on screen. Splitting a note across two
+--- sides is a way of drawing it once when both are in front of you; if the
+--- other side is not displayed, the same rule would hand the note to a buffer
+--- nobody is looking at, and it would simply vanish.
 ---@param buf integer
 ---@return integer|nil
 function M.sibling_buf(buf)
   for tab, data in pairs(M.tabs) do
     if vim.api.nvim_tabpage_is_valid(tab) then
+      local sibling
       if data.right_buf == buf then
-        return data.left_buf
+        sibling = data.left_buf
+      elseif data.left_buf == buf then
+        sibling = data.right_buf
       end
-      if data.left_buf == buf then
-        return data.right_buf
+      if sibling and util.buf_is_displayed(sibling) then
+        return sibling
       end
     else
       M.tabs[tab] = nil

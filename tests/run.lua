@@ -582,6 +582,66 @@ do
   check('and only them', store.get(repo, fresh.id) ~= nil)
 end
 
+section('side ownership')
+local sdir = new_repo('sides')
+do
+  vim.cmd('cd ' .. vim.fn.fnameescape(sdir))
+  write(sdir, 'code.go', {
+    'package main',
+    '',
+    'func alpha() int {',
+    '\treturn 1',
+    '}',
+  })
+  sh('git add -A && git commit -qm one', sdir)
+  local c1 = sh('git rev-parse HEAD', sdir)
+
+  -- notes written while the file is clean: both address the committed blob,
+  -- which is also the blob the review's old side will hold
+  reset_state()
+  edit(vim.fs.joinpath(sdir, 'code.go'))
+  local n_keep = virgil.note({ line = 1, summary = 'untouched line' })
+  local n_chg = virgil.note({ line = 4, summary = 'line that will change' })
+  eq('anchored to the committed blob', n_keep.anchor.blob, git.file_blob(git.repo(sdir), c1, 'code.go'))
+
+  write(sdir, 'code.go', {
+    'package main',
+    '',
+    'func alpha() int {',
+    '\treturn 2',
+    '}',
+  })
+  reset_state()
+  virgil.review({ base = c1 })
+  local d = review.tabs[vim.api.nvim_get_current_tabpage()]
+  local function ids(b)
+    render.render(b)
+    return vim.tbl_map(function(p)
+      return p.id
+    end, render.notes_in(b))
+  end
+
+  -- the reported bug: editing line 4 changes the whole file's sha, so the new
+  -- side stopped matching the anchor's address and *every* note in the file
+  -- moved to the old side — including notes on lines the edit never touched
+  check('a note on an untouched line stays on the new side', vim.tbl_contains(ids(d.right_buf), n_keep.id), vim.inspect(ids(d.right_buf)))
+  check('and is not duplicated onto the old side', not vim.tbl_contains(ids(d.left_buf), n_keep.id))
+  check('a note on the changed line belongs to the old side', vim.tbl_contains(ids(d.left_buf), n_chg.id))
+  check('and is not drawn stale on the new side', not vim.tbl_contains(ids(d.right_buf), n_chg.id))
+
+  -- with the pair split up, giving a note to the half nobody is looking at is
+  -- indistinguishable from losing it
+  vim.api.nvim_set_current_win(d.right)
+  vim.cmd('only')
+  eq('the old side is off screen', util.buf_is_displayed(d.left_buf), false)
+  eq('so it is no longer treated as a sibling', review.sibling_buf(d.right_buf), nil)
+  local alone = ids(d.right_buf)
+  check('the old-side note is drawn where it can be seen', vim.tbl_contains(alone, n_chg.id), vim.inspect(alone))
+  check('and the new-side note is still there', vim.tbl_contains(alone, n_keep.id))
+
+  review.close()
+end
+
 --------------------------------------------------------------------- summary
 
 io.write(('\n%d passed, %d failed\n'):format(passed, #failures))
