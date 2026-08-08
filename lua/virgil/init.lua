@@ -8,7 +8,7 @@ local convert = require('virgil.convert')
 local git = require('virgil.git')
 local project = require('virgil.project')
 local render = require('virgil.render')
-local review = require('virgil.review')
+local changeset = require('virgil.changeset')
 local store = require('virgil.store')
 local ui = require('virgil.ui')
 local util = require('virgil.util')
@@ -136,18 +136,18 @@ function M.status()
   }
   out.notes.total = #store.for_path(view.repo, view.path)
 
-  local ctx = review.context_for_buf(buf)
-  if review.state then
-    out.review = {
-      spec = review.state.spec,
-      base = review.state.base,
-      head = review.state.head or '',
-      base_sha = review.state.base_sha or '',
-      head_sha = review.state.head_sha or '',
-      files = #review.state.files,
+  local ctx = changeset.context_for_buf(buf)
+  if changeset.state then
+    out.changeset = {
+      spec = changeset.state.spec,
+      base = changeset.state.base,
+      head = changeset.state.head or '',
+      base_sha = changeset.state.base_sha or '',
+      head_sha = changeset.state.head_sha or '',
+      files = #changeset.state.files,
       current = ctx and ctx.path or '',
       side = ctx and ctx.side or '',
-      in_review = ctx ~= nil,
+      in_changeset = ctx ~= nil,
     }
   end
   return out
@@ -172,17 +172,17 @@ function M.note(opts)
     line, end_line = end_line, line
   end
 
-  local rc = review.context_for_buf(view.buf)
+  local rc = changeset.context_for_buf(view.buf)
   local author = opts.author or config.options.author or vim.env.USER or 'me'
 
   local function create(summary, rationale)
     local a = anchor.make(view, line, end_line)
     local context
     if rc then
-      -- `review` is the label a human reads; `base`/`head` are the commits it
+      -- `changeset` is the label a human reads; `base`/`head` are the commits it
       -- actually meant. Refs move and `HEAD` moves, so the label alone cannot
       -- name this changeset again tomorrow.
-      context = { review = rc.spec, base = rc.base_sha, head = rc.head_sha }
+      context = { changeset = rc.spec, base = rc.base_sha, head = rc.head_sha }
       if rc.base ~= rc.base_sha then
         context.base_ref = rc.base
       end
@@ -192,7 +192,7 @@ function M.note(opts)
       if rc.paths and #rc.paths > 0 then
         context.paths = vim.deepcopy(rc.paths)
       end
-      local header = review.hunk_header(view.buf, line)
+      local header = changeset.hunk_header(view.buf, line)
       if header then
         context.hunk_header = header
       end
@@ -243,7 +243,7 @@ function M.update(id, fields)
 end
 
 --- Query notes: stored anchor plus where they land in the current view.
----@param filter table|nil `{ path, status, review, id }`
+---@param filter table|nil `{ path, status, changeset, id }`
 ---@return table[]
 function M.notes(filter)
   filter = filter or {}
@@ -257,8 +257,8 @@ function M.notes(filter)
     path = git.rel(repo, path) or path
   end
   local notes = path and store.for_path(repo, path) or store.all(repo)
-  -- resolved once: a review filter names commits, not a string to match
-  local want = filter.review and review.changeset_of(repo, filter.review) or nil
+  -- resolved once: a changeset filter names commits, not a string to match
+  local want = filter.changeset and changeset.changeset_of(repo, filter.changeset) or nil
   local out = {}
   for _, note in ipairs(notes) do
     local ok = true
@@ -268,7 +268,7 @@ function M.notes(filter)
     if filter.status and note.status ~= filter.status then
       ok = false
     end
-    if want and not review.same_changeset(note.context, want) then
+    if want and not changeset.same_changeset(note.context, want) then
       ok = false
     end
     if ok then
@@ -315,7 +315,7 @@ function M.open(path, opts)
       util.err(('%s does not exist at %s'):format(path, opts.rev))
       return M.status()
     end
-    local buf = review.blob_buf(repo, sha, path, opts.rev, 'old', nil)
+    local buf = changeset.blob_buf(repo, sha, path, opts.rev, 'old', nil)
     vim.api.nvim_set_current_buf(buf)
   else
     local abs = vim.startswith(path, '/') and path or git.abs(repo, path)
@@ -410,7 +410,7 @@ end
 ---@return table|nil
 function M.review(opts)
   opts = opts or {}
-  local st = review.start({
+  local st = changeset.start({
     base = opts.base,
     head = opts.head,
     paths = opts.paths,
@@ -423,15 +423,15 @@ function M.review(opts)
     spec = st.spec,
     base = st.base,
     head = st.head or '',
-    files = review.files(),
+    files = changeset.files(),
   }
 end
 
---- Changed files of the open review, or of the worktree if none is open.
+--- Changed files of the open changeset, or of the worktree if none is open.
 ---@return table[]
 function M.files()
-  if review.state then
-    return review.files()
+  if changeset.state then
+    return changeset.files()
   end
   local repo = current_repo()
   if not repo then
@@ -454,7 +454,7 @@ function M.files()
 end
 
 --- Export notes.
----@param opts table|nil `{ format, review, status, path, out }`
+---@param opts table|nil `{ format, changeset, status, path, out }`
 ---@return string|nil
 function M.export(opts)
   opts = opts or {}
@@ -462,7 +462,7 @@ function M.export(opts)
   if not repo then
     return nil
   end
-  local notes = M.notes({ review = opts.review, status = opts.status, path = opts.path })
+  local notes = M.notes({ changeset = opts.changeset, status = opts.status, path = opts.path })
   for _, n in ipairs(notes) do
     n.projected = nil
   end
@@ -474,7 +474,7 @@ function M.export(opts)
 end
 
 --- Import notes produced by another tool.
----@param opts table `{ file, review, author }`
+---@param opts table `{ file, changeset, author }`
 ---@return integer
 function M.import(opts)
   local repo = current_repo()

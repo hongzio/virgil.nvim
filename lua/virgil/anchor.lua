@@ -12,7 +12,7 @@ local sha_cache = {} ---@type table<integer, {tick:integer, sha:string|nil}>
 
 --- Resolve the content address of a buffer.
 ---@param buf integer|nil
----@return table|nil view `{ buf, repo, kind = 'blob'|'file', path, blob?, file?, rev?, side?, review? }`
+---@return table|nil view `{ buf, repo, kind = 'blob'|'file', path, blob?, file?, rev?, side?, changeset? }`
 function M.view(buf)
   if buf == nil or buf == 0 then
     buf = vim.api.nvim_get_current_buf()
@@ -35,7 +35,7 @@ function M.view(buf)
       path = marked.path,
       rev = marked.rev,
       side = marked.side,
-      review = marked.review,
+      changeset = marked.changeset,
     }
   end
 
@@ -55,13 +55,13 @@ function M.view(buf)
     return nil
   end
   local view = { buf = buf, repo = repo, kind = 'file', path = rel, file = vim.fs.normalize(name) }
-  -- a worktree file shown as the new side of a review is still a plain file
-  -- buffer; it just knows which review it is being read under
-  local ok, review = pcall(require, 'virgil.review')
+  -- a worktree file shown as the new side of a changeset is still a plain file
+  -- buffer; it just knows which changeset it is being read under
+  local ok, changeset = pcall(require, 'virgil.changeset')
   if ok then
-    local ctx = review.context_for_buf(buf)
+    local ctx = changeset.context_for_buf(buf)
     if ctx then
-      view.review, view.side = ctx.spec, ctx.side
+      view.changeset, view.side = ctx.spec, ctx.side
     end
   end
   return view

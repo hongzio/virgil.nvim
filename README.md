@@ -31,7 +31,7 @@ Calling `setup()` is optional. The defaults work on their own.
 Requires Neovim 0.10+ (0.12 recommended — its default `diffopt` is
 `inline:char,linematch:40`) and git. There are no hard dependencies: `fzf-lua` /
 `snacks.nvim` are used as the picker if present, otherwise it falls back to quickfix, and
-`gh` adds pull requests to the review picker if you happen to have it.
+`gh` adds pull requests to the changeset picker if you happen to have it.
 
 ## Usage
 
@@ -42,12 +42,12 @@ Requires Neovim 0.10+ (0.12 recommended — its default `diffopt` is
 :Virgil remove           " delete the note near the cursor (irreversible)
 :Virgil review [base] [head]   " open a changeset as diff tabs; with no arguments, pick one
 :Virgil files            " changed-file picker
-:Virgil sidebar          " toggle the review's changed-file list
+:Virgil sidebar          " toggle the changeset's changed-file list
 :Virgil export [path] [format] " export notes (agent-context | json | markdown)
 :Virgil import [path]    " read in external notes
 :Virgil prune            " clean up notes that lost their position
 :Virgil socket           " print this instance's RPC socket path
-:Virgil quit             " tear down review tabs
+:Virgil quit             " tear down changeset tabs
 ```
 
 In the compose window the first non-empty line is the summary and everything below it is
@@ -84,17 +84,17 @@ map('n', '<leader>vd', '<Cmd>Virgil review<CR>',          { desc = 'Virgil pick 
 map('n', '<leader>vR', '<Cmd>Virgil review HEAD<CR>',     { desc = 'Virgil review worktree' })
 map('n', '<leader>vf', '<Cmd>Virgil files<CR>',           { desc = 'Virgil changed files' })
 map('n', '<leader>vs', '<Cmd>Virgil sidebar<CR>',         { desc = 'Virgil toggle file list' })
-map('n', '<leader>vq', '<Cmd>Virgil quit<CR>',            { desc = 'Virgil close review tabs' })
+map('n', '<leader>vq', '<Cmd>Virgil quit<CR>',            { desc = 'Virgil close changeset tabs' })
 
 map('n', ']n', '<Plug>(virgil-next-note)',                { desc = 'Next virgil note' })
 map('n', '[n', '<Plug>(virgil-prev-note)',                { desc = 'Prev virgil note' })
-map('n', ']v', '<Plug>(virgil-next-file)',                { desc = 'Next virgil review file' })
-map('n', '[v', '<Plug>(virgil-prev-file)',                { desc = 'Prev virgil review file' })
+map('n', ']v', '<Plug>(virgil-next-file)',                { desc = 'Next virgil changeset file' })
+map('n', '[v', '<Plug>(virgil-prev-file)',                { desc = 'Prev virgil changeset file' })
 ```
 
 Two things worth stealing from that, whatever prefix you settle on. `<leader>vR` passes
 `HEAD` explicitly, because a bare `:Virgil review` now opens the picker rather than the
-working tree. And review's file cycling sits on `]v` / `[v` rather than the more obvious
+working tree. And changeset file cycling sits on `]v` / `[v` rather than the more obvious
 `]f` / `[f`, which nvim-treesitter's textobjects already claim for function motions.
 
 Hunk navigation uses diff mode's built-in `]c` / `[c` as-is.
@@ -102,7 +102,7 @@ Hunk navigation uses diff mode's built-in `]c` / `[c` as-is.
 ### Review
 
 `:Virgil review origin/main` spreads a changeset into per-file diff tabs. Tabs are created
-on visit — a 200-file review does not open 200 tabs up front. `<Plug>(virgil-next-file)`
+on visit — a 200-file changeset does not open 200 tabs up front. `<Plug>(virgil-next-file)`
 and its pair move between files, `:Virgil files` picks any file directly, and
 `:Virgil quit` cleans everything up.
 
@@ -111,18 +111,18 @@ and its pair move between files, `:Virgil files` picks any file directly, and
 ```
 ▸ M README.md               +26 -1  31♦
   M lua/virgil/git.lua           +59 -0
-  M lua/virgil/review.lua      +319 -10
+  M lua/virgil/changeset.lua      +319 -10
 ```
 
-`<CR>` opens a row, `q` closes the list. Because a review is one tab per file, this is one
+`<CR>` opens a row, `q` closes the list. Because a changeset is one tab per file, this is one
 window per tab over a **single shared buffer** — what differs between tabs is which row
 carries the `▸`, and that is a redraw rather than another window's worth of state. Turning
 it off closes it in every tab at once, including the ones you have not visited: a list left
 standing in a tab you later walk into reads as the toggle having failed. It is off by
-default (`review.sidebar = true` opens it with every review, `review.sidebar_width` sets
+default (`changeset.sidebar = true` opens it with every changeset, `changeset.sidebar_width` sets
 the column).
 
-With no arguments it asks which changeset instead: what is uncommitted, **the reviews that
+With no arguments it asks which changeset instead: what is uncommitted, **the changesets that
 already hold notes**, what this branch adds over the one it tracks, and recent commits
 against their parents. The middle one is the point — after an agent leaves notes on a
 changeset, that changeset is a list entry rather than a pair of revisions you have to
@@ -138,10 +138,10 @@ virgil asks before fetching `pull/N/head`; nothing reaches the network without b
 chosen. Neither `gh` nor GitHub is a dependency — without them the row is simply absent.
 
 With two commits the diff is taken from where their histories parted, git's
-`base...head` — the same range a forge shows for a pull request, and what the review spec
+`base...head` — the same range a forge shows for a pull request, and what the changeset spec
 prints. Measuring from the tip of the base branch instead would fold every commit the base
-gained since the branch point into the review, backwards: files the change never touched,
-listed as though it reverted them. A review against the working tree keeps the plain
+gained since the branch point into the changeset, backwards: files the change never touched,
+listed as though it reverted them. A changeset against the working tree keeps the plain
 two-dot `base..worktree`; there is no second commit to part from.
 
 The left side is a read-only scratch buffer holding the old revision's blob; the right side
@@ -164,15 +164,15 @@ would march over to the old side at once. Splitting sides also stops the moment 
 half leaves the screen: handing a note to a window nobody is looking at is
 indistinguishable from losing it.
 
-A note written inside a review records where it came from: the label you typed
+A note written inside a changeset records where it came from: the label you typed
 (`origin/main..pr-1`), and the two commits that label resolved to. Refs move — `HEAD` moves
 with every commit, a branch moves with every fetch — so the label alone cannot name that
-changeset again tomorrow, and only the commits can. Two reviews of the same commits are
-therefore one review however they were spelled, which is what `notes({ review = … })`
+changeset again tomorrow, and only the commits can. Two changesets over the same commits are
+therefore one changeset however they were spelled, which is what `notes({ changeset = … })`
 matches on and what decides whether a note is drawn as this screen's own or as background.
 None of it takes part in position calculation; that is the anchor's job alone.
 
-One review per instance. Starting a new one tears down the previous review's tabs.
+One changeset per instance. Starting a new one tears down the previous changeset's tabs.
 
 ## Agents
 
@@ -246,7 +246,7 @@ local virgil = require('virgil')
 
 virgil.status()                    -- current view's content address, path, cursor, visible note count
 virgil.note({ path, line, end_line, summary, rationale, author })
-virgil.notes({ path, status, review, id })  -- stored anchor + projection into the current view
+virgil.notes({ path, status, changeset, id })  -- stored anchor + projection into the current view
 virgil.update(id, { summary = '…' })
 virgil.open(path, { line = 1036, rev = nil })
 virgil.remove(id)                  -- delete; nothing else in virgil destroys a note
@@ -255,7 +255,7 @@ virgil.next_note() / virgil.prev_note()
 virgil.toggle('all')
 virgil.review({ base = 'origin/main', head = nil, paths = { 'internal/' } })
 virgil.files()
-virgil.export({ format = 'agent-context', review = '…', out = '/path.json' })
+virgil.export({ format = 'agent-context', changeset = '…', out = '/path.json' })
 virgil.import({ file = '/path.json' })
 virgil.prune({ dry_run = true })
 ```
@@ -297,10 +297,10 @@ require('virgil').setup({
     show_rationale = true,
     align_indent = true, -- align the note block to the code's indentation
   },
-  review = {
+  changeset = {
     layout = 'vertical', -- 'vertical' | 'horizontal'
     highlight = 'syntax',-- 'syntax' | 'filetype' | false
-    sidebar = false,     -- open the changed-file list with every review
+    sidebar = false,     -- open the changed-file list with every changeset
     sidebar_width = 40,
   },
   socket = { enable = true, path = nil },
@@ -330,8 +330,8 @@ the drift itself is the signal that the code changed underneath it.
 | Ambiguity in fallback search | Require an exact match on the original text (retrying whitespace-insensitively on failure), then score candidates by how many of the recorded 3 context lines above and below are still attached. Nearer lines weigh more, and ties go to the candidate closest to the recorded line |
 | Projection cache invalidation | Cache per `changedtick`, with rendering debounced at 60ms. When the anchor content and the view content are identical, `vim.diff` is skipped entirely |
 | Note cleanup policy | `prune` only removes notes that have been unlocatable for 30 days and notes closed for 90 days. The command asks for confirmation before deleting |
-| Concurrent reviews | One per instance. A new review tears down the previous review's tabs on the way in |
-| Filetype of the left-hand blob | `filetype` is left unset and only treesitter (or `syntax` if unavailable) is enabled. You get highlighting without a language server attaching to a buffer that has no file. Change it with `review.highlight = 'filetype'` |
+| Concurrent changesets | One per instance. A new changeset tears down the previous changeset's tabs on the way in |
+| Filetype of the left-hand blob | `filetype` is left unset and only treesitter (or `syntax` if unavailable) is enabled. You get highlighting without a language server attaching to a buffer that has no file. Change it with `changeset.highlight = 'filetype'` |
 | Socket lifetime | The first instance takes the canonical path; later ones fall back to `<path>.<pid>`. Socket files from dead instances are cleaned up automatically |
 | Telling agent notes from human ones | It goes no further than stamping the name (`author`) dimly in the note's header. Colors aren't split because the distinction that matters is not "who wrote it" but "is this about the change in front of me" — and emphasis versus dimming already carries that |
 
@@ -342,4 +342,4 @@ nvim --clean -l tests/run.lua
 ```
 
 The suite covers anchoring and projection, persistence across a real second Neovim process,
-diff-pair ownership in review, and rendering geometry in narrow windows.
+diff-pair ownership in a changeset, and rendering geometry in narrow windows.

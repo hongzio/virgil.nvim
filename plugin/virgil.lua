@@ -151,7 +151,7 @@ local subcommands = {
       vim.notify('virgil: not inside a git repository', vim.log.levels.ERROR, { title = 'virgil' })
       return
     end
-    local items = require('virgil.review').candidates(repo)
+    local items = require('virgil.changeset').candidates(repo)
     if #items == 0 then
       vim.notify('virgil: nothing to review', vim.log.levels.INFO, { title = 'virgil' })
       return
@@ -159,7 +159,7 @@ local subcommands = {
     table.insert(items, { kind = 'other', label = 'other revisions…', detail = 'type them out' })
 
     vim.ui.select(items, {
-      prompt = 'review',
+      prompt = 'changeset',
       format_item = function(it)
         return ('%-9s %s  %s'):format(it.kind, fit(it.label, 52), it.detail or '')
       end,
@@ -182,14 +182,14 @@ local subcommands = {
     end)
   end,
   files = function()
-    local review = require('virgil.review')
+    local changeset = require('virgil.changeset')
     local files = require('virgil').files()
     if #files == 0 then
       vim.notify('virgil: no changed files', vim.log.levels.INFO, { title = 'virgil' })
       return
     end
     vim.ui.select(files, {
-      prompt = review.state and ('files · ' .. review.state.spec) or 'changed files',
+      prompt = changeset.state and ('files · ' .. changeset.state.spec) or 'changed files',
       format_item = function(f)
         return ('%s %-50s +%d -%d%s'):format(f.status, f.path, f.added, f.removed, f.notes > 0 and ('  ' .. f.notes .. '♦') or '')
       end,
@@ -197,8 +197,8 @@ local subcommands = {
       if not choice then
         return
       end
-      if review.state then
-        review.open_file(choice.path)
+      if changeset.state then
+        changeset.open_file(choice.path)
       else
         require('virgil').open(choice.path, {})
       end
@@ -234,15 +234,15 @@ local subcommands = {
     end
   end,
   sidebar = function()
-    local review = require('virgil.review')
-    if not review.state then
-      vim.notify('virgil: no review is open', vim.log.levels.WARN, { title = 'virgil' })
+    local changeset = require('virgil.changeset')
+    if not changeset.state then
+      vim.notify('virgil: no changeset is open', vim.log.levels.WARN, { title = 'virgil' })
       return
     end
-    review.sidebar_toggle()
+    changeset.sidebar_toggle()
   end,
   quit = function()
-    require('virgil.review').close()
+    require('virgil.changeset').close()
   end,
   status = function()
     print(vim.inspect(require('virgil').status()))
@@ -309,10 +309,10 @@ local plugs = {
     subcommands.sidebar({})
   end,
   ['<Plug>(virgil-next-file)'] = function()
-    require('virgil.review').cycle_file(1)
+    require('virgil.changeset').cycle_file(1)
   end,
   ['<Plug>(virgil-prev-file)'] = function()
-    require('virgil.review').cycle_file(-1)
+    require('virgil.changeset').cycle_file(-1)
   end,
 }
 
@@ -353,14 +353,14 @@ vim.api.nvim_create_autocmd({ 'TextChanged', 'InsertLeave' }, {
   end,
 })
 
--- the file list follows you between a review's tabs; what changes is which row
+-- the file list follows you between a changeset's tabs; what changes is which row
 -- is marked current
 vim.api.nvim_create_autocmd('TabEnter', {
   group = group,
   callback = function()
-    local ok, review = pcall(require, 'virgil.review')
-    if ok and review.state then
-      review.sidebar_sync()
+    local ok, changeset = pcall(require, 'virgil.changeset')
+    if ok and changeset.state then
+      changeset.sidebar_sync()
     end
   end,
 })

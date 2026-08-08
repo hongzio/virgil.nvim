@@ -1,4 +1,4 @@
---- The review view: a changeset expanded into per-file diff tabs.
+--- A changeset: two revisions expanded into per-file diff tabs.
 --- virgil renders no diff of its own — both sides are ordinary buffers and
 --- Neovim's own diff mode does the work.
 local config = require('virgil.config')
@@ -7,7 +7,7 @@ local util = require('virgil.util')
 
 local M = {}
 
---- One review at a time per Neovim instance; starting another replaces it.
+--- One changeset at a time per Neovim instance; starting another replaces it.
 M.state = nil ---@type table|nil
 
 M.tabs = {} ---@type table<integer, table>
@@ -27,7 +27,7 @@ end
 --- Highlight a blob buffer without setting 'filetype', so no language server
 --- tries to attach to a buffer that has no file behind it.
 local function highlight(buf, path)
-  local how = config.options.review.highlight
+  local how = config.options.changeset.highlight
   if not how then
     return
   end
@@ -53,9 +53,9 @@ end
 ---@param path string
 ---@param rev string|nil label used in the buffer name
 ---@param side string 'old'|'new'
----@param review string|nil review spec this buffer belongs to
+---@param changeset string|nil changeset spec this buffer belongs to
 ---@return integer buf
-function M.blob_buf(repo, sha, path, rev, side, review)
+function M.blob_buf(repo, sha, path, rev, side, changeset)
   local label = git.is_null(sha) and 'empty' or tostring(sha):sub(1, 7)
   local name = ('virgil://%s/%s'):format(label, path)
 
@@ -90,7 +90,7 @@ function M.blob_buf(repo, sha, path, rev, side, review)
       root = repo.root,
       rev = rev,
       side = side,
-      review = review,
+      changeset = changeset,
     }
   end
   return buf
@@ -161,7 +161,7 @@ local function spec_of(base, head, three_dot)
   return ('%s%s%s'):format(base or 'HEAD', three_dot and '...' or '..', head or 'worktree')
 end
 
---- Start a review.
+--- Start reviewing a changeset.
 ---@param opts table `{ base, head, paths, repo }`
 ---@return table|nil state
 function M.start(opts)
@@ -195,7 +195,7 @@ function M.start(opts)
 
   -- A changeset is measured from where the two histories parted, not from the
   -- tip of the base branch. Once the base moves on, a plain two-dot diff folds
-  -- the base's own new commits into the review backwards — files the change
+  -- the base's own new commits into the changeset backwards — files the change
   -- never touched, shown as if this change reverted them. This is git's
   -- `base...head`, and the diff a forge shows for a pull request.
   local diff_base = base_sha
@@ -227,8 +227,8 @@ function M.start(opts)
   }
 
   -- configured on, it starts on; configured off, a manual toggle still carries
-  -- across reviews rather than being reset under you
-  if config.options.review.sidebar then
+  -- across changesets rather than being reset under you
+  if config.options.changeset.sidebar then
     M.sidebar_toggle(true)
   end
   M.open_file(files[1].path)
@@ -252,7 +252,7 @@ end
 
 ------------------------------------------------------------------- sidebar
 --
--- A review is one tab per file, so "the sidebar" is really one window per tab
+-- A changeset is one tab per file, so "the sidebar" is really one window per tab
 -- showing one shared buffer. It is off by default and follows you from tab to
 -- tab rather than being rebuilt: what changes between tabs is which row is
 -- marked current, and that is a redraw, not a window.
@@ -265,7 +265,7 @@ local function sidebar_buf()
     return sidebar.buf
   end
   local buf = vim.api.nvim_create_buf(false, true)
-  pcall(vim.api.nvim_buf_set_name, buf, 'virgil://review/files')
+  pcall(vim.api.nvim_buf_set_name, buf, 'virgil://changeset/files')
   vim.bo[buf].buftype = 'nofile'
   vim.bo[buf].bufhidden = 'hide'
   vim.bo[buf].swapfile = false
@@ -292,8 +292,8 @@ end
 
 local function sidebar_render()
   local buf = sidebar_buf()
-  local width = config.options.review.sidebar_width
-  local current = vim.t[vim.api.nvim_get_current_tabpage()].virgil_review
+  local width = config.options.changeset.sidebar_width
+  local current = vim.t[vim.api.nvim_get_current_tabpage()].virgil_changeset
   local lines, tails = {}, {}
   sidebar.rows = {}
 
@@ -335,7 +335,7 @@ local function open_sidebar_win()
   vim.wo[win].signcolumn = 'no'
   vim.wo[win].winfixwidth = true
   vim.wo[win].cursorline = true
-  vim.api.nvim_win_set_width(win, config.options.review.sidebar_width)
+  vim.api.nvim_win_set_width(win, config.options.changeset.sidebar_width)
   -- a vsplit takes its width out of the current window alone, which would
   -- leave the two halves of the diff lopsided. 'winfixwidth' holds the list at
   -- its column while the rest is shared out evenly.
@@ -371,7 +371,7 @@ function M.sidebar_sync()
   sidebar_render()
 end
 
---- Show or hide the review's file list. Returns the state it settled on.
+--- Show or hide the changeset's file list. Returns the state it settled on.
 ---@param to boolean|nil nil toggles
 ---@return boolean on
 function M.sidebar_toggle(to)
@@ -408,7 +408,7 @@ end
 function M.open_file(path)
   local st = M.state
   if not st then
-    util.warn('no review is open')
+    util.warn('no changeset is open')
     return false
   end
   local entry = M.entry(path)
@@ -436,7 +436,7 @@ function M.open_file(path)
     vim.fn.bufload(new_buf)
   end
 
-  vim.cmd(config.options.review.layout == 'horizontal' and 'aboveleft split' or 'aboveleft vsplit')
+  vim.cmd(config.options.changeset.layout == 'horizontal' and 'aboveleft split' or 'aboveleft vsplit')
   local left = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(left, old_buf)
 
@@ -447,7 +447,7 @@ function M.open_file(path)
     end)
   end
 
-  vim.t[tab].virgil_review = path
+  vim.t[tab].virgil_changeset = path
   st.tabs[path] = tab
   M.tabs[tab] = {
     path = path,
@@ -482,10 +482,10 @@ end
 function M.cycle_file(delta)
   local st = M.state
   if not st then
-    util.warn('no review is open')
+    util.warn('no changeset is open')
     return
   end
-  local current = vim.t[vim.api.nvim_get_current_tabpage()].virgil_review
+  local current = vim.t[vim.api.nvim_get_current_tabpage()].virgil_changeset
   local idx = 1
   for i, f in ipairs(st.files) do
     if f.path == current then
@@ -578,21 +578,21 @@ function M.candidates(repo)
     })
   end
 
-  -- reviews that already hold notes: the way back to what an agent left behind
+  -- changesets that already hold notes: the way back to what an agent left behind
   local store = require('virgil.store')
-  local seen, reviews = {}, {}
+  local seen, changesets = {}, {}
   for _, note in ipairs(store.all(repo)) do
     local c = note.context
     if c and c.base then
       local key = c.base .. '|' .. (c.head or '')
       if not seen[key] then
-        seen[key] = { kind = 'notes', label = c.review or key, base = c.base, head = c.head, count = 0 }
-        table.insert(reviews, seen[key])
+        seen[key] = { kind = 'notes', label = c.changeset or key, base = c.base, head = c.head, count = 0 }
+        table.insert(changesets, seen[key])
       end
       seen[key].count = seen[key].count + 1
     end
   end
-  for _, r in ipairs(reviews) do
+  for _, r in ipairs(changesets) do
     -- a changeset whose commits are gone would only fail at open time
     local alive = git.rev_commit(repo, r.base) and (not r.head or git.rev_commit(repo, r.head))
     if alive then
@@ -638,18 +638,18 @@ end
 
 --- Does `context` name the same changeset as `other`?
 ---
---- Two reviews of the same two commits are the same review even when they were
+--- Two changesets over the same two commits are the same changeset even when
 --- spelled differently — `origin/main..abc123` and `main..abc123` — so the
 --- recorded commits decide, and the label is only a fast path (and the only
 --- thing notes written before commits were recorded have).
 ---@param context table|nil a note's `context`
----@param other table|nil `{ spec, base_sha, head_sha }` — a review state or tab
+---@param other table|nil `{ spec, base_sha, head_sha }` — a changeset state or tab
 ---@return boolean
 function M.same_changeset(context, other)
   if not context or not other then
     return false
   end
-  if context.review and context.review == other.spec then
+  if context.changeset and context.changeset == other.spec then
     return true
   end
   if not context.base or not other.base_sha then
@@ -758,7 +758,7 @@ function M.files()
   return out
 end
 
---- Tear the review down (`:Virgil quit`).
+--- Tear the changeset down (`:Virgil quit`).
 ---@param opts table|nil
 function M.close(opts)
   opts = opts or {}
@@ -770,11 +770,11 @@ function M.close(opts)
   for tab in pairs(sidebar.wins) do
     sidebar.wins[tab] = nil
   end
-  local review_tabs = {}
+  local changeset_tabs = {}
   local count = 0
   for _, tab in pairs(st.tabs) do
-    if vim.api.nvim_tabpage_is_valid(tab) and not review_tabs[tab] then
-      review_tabs[tab] = true
+    if vim.api.nvim_tabpage_is_valid(tab) and not changeset_tabs[tab] then
+      changeset_tabs[tab] = true
       count = count + 1
     end
   end
@@ -782,7 +782,7 @@ function M.close(opts)
   if count > 0 and count == #vim.api.nvim_list_tabpages() then
     vim.cmd('tabnew')
   end
-  for tab in pairs(review_tabs) do
+  for tab in pairs(changeset_tabs) do
     if vim.api.nvim_tabpage_is_valid(tab) then
       pcall(vim.cmd, vim.api.nvim_tabpage_get_number(tab) .. 'tabclose!')
     end

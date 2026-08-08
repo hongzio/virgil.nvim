@@ -39,18 +39,18 @@ local function visibility(note, pos, view)
     return false, false
   end
 
-  local review = require('virgil.review')
-  local current = review.state
-  local from_review = note.context and note.context.review or nil
+  local changeset = require('virgil.changeset')
+  local current = changeset.state
+  local from_changeset = note.context and note.context.changeset or nil
 
-  if view.review then
-    -- inside a review tab: this review's own notes are the loud ones
-    local mine = review.same_changeset(note.context, current or { spec = view.review })
-    return true, from_review ~= nil and not mine
+  if view.changeset then
+    -- inside a changeset tab: this changeset's own notes are the loud ones
+    local mine = changeset.same_changeset(note.context, current or { spec = view.changeset })
+    return true, from_changeset ~= nil and not mine
   end
-  -- ordinary buffer: notes belonging to the review that is currently open are
+  -- ordinary buffer: notes belonging to the changeset that is currently open are
   -- background context, not the point of this screen
-  local dim = current ~= nil and review.same_changeset(note.context, current)
+  local dim = current ~= nil and changeset.same_changeset(note.context, current)
   return true, dim or (pos.status == 'orphan' and m ~= 'all')
 end
 
@@ -77,7 +77,7 @@ end
 --- Without this, a note written on the new side also lands on the old side —
 --- inside a hunk, so marked `stale`. That reading is wrong: `stale` means the
 --- line changed *after* the note was written, and here nothing
---- changed; we are just looking at the other revision. Since a review shows two
+--- changed; we are just looking at the other revision. Since a changeset shows two
 --- revisions of the same lines side by side, the note is drawn once.
 ---
 --- The side that kept the anchored line intact wins. Only when neither did does
@@ -369,7 +369,7 @@ function M.render(buf)
   local cfg = config.options.render
   local placed = {}
 
-  local sibling = require('virgil.review').sibling_buf(buf)
+  local sibling = require('virgil.changeset').sibling_buf(buf)
   local other = sibling and require('virgil.anchor').view(sibling) or nil
 
   for _, item in ipairs(items) do
@@ -411,10 +411,10 @@ function M.refresh()
   for _, buf in ipairs(util.visible_buffers()) do
     M.render(buf)
   end
-  -- the review's file list carries per-file note counts, so it is stale too
-  local review = require('virgil.review')
-  if review.state then
-    review.sidebar_sync()
+  -- the changeset's file list carries per-file note counts, so it is stale too
+  local changeset = require('virgil.changeset')
+  if changeset.state then
+    changeset.sidebar_sync()
   end
 end
 

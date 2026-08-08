@@ -102,7 +102,7 @@ end
 
 --- Read notes from an external file and anchor them to current content.
 ---@param repo table
----@param opts table `{ file, format, author, review }`
+---@param opts table `{ file, format, author, changeset }`
 ---@return integer imported
 function M.import(repo, opts)
   opts = opts or {}
@@ -169,7 +169,7 @@ function M.import(repo, opts)
         rationale = ann.rationale or ann.body or '',
         status = ann.status or 'open',
         created_at = util.now(),
-        context = opts.review and { review = opts.review } or nil,
+        context = opts.changeset and { changeset = opts.changeset } or nil,
       })
       count = count + 1
     end

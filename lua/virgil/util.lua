@@ -187,7 +187,7 @@ end
 --- Width available for note text in `buf`.
 ---
 --- Extmarks are per buffer, but the same buffer can be on screen in several
---- windows at once — a review tab's narrow diff half and a full-width window in
+--- windows at once — a changeset tab's narrow diff half and a full-width window in
 --- another tab, say. The narrowest one wins, so what is drawn fits everywhere.
 ---@param buf integer
 ---@return integer

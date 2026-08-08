@@ -29,7 +29,7 @@ M.defaults = {
   --- 'auto' picks fzf-lua, then snacks.nvim, then quickfix
   picker = 'auto', -- 'auto' | 'fzf-lua' | 'snacks' | 'quickfix'
 
-  review = {
+  changeset = {
     --- 'vertical' (side by side) or 'horizontal'
     layout = 'vertical',
     --- Highlight the old-revision (left) scratch buffer.
@@ -37,8 +37,8 @@ M.defaults = {
     --- tries to attach to a buffer that has no file behind it.
     --- 'filetype' sets it anyway; false leaves the buffer plain.
     highlight = 'syntax', -- 'syntax' | 'filetype' | false
-    --- Open the changed-file list beside every review tab. Off by default;
-    --- `:Virgil sidebar` toggles it, and the toggle outlives one review.
+    --- Open the changed-file list beside every changeset tab. Off by default;
+    --- `:Virgil sidebar` toggles it, and the toggle outlives one changeset.
     sidebar = false,
     sidebar_width = 40,
   },

@@ -79,7 +79,7 @@ local anchor = require('virgil.anchor')
 local git = require('virgil.git')
 local project = require('virgil.project')
 local render = require('virgil.render')
-local review = require('virgil.review')
+local changeset = require('virgil.changeset')
 local store = require('virgil.store')
 local util = require('virgil.util')
 
@@ -267,7 +267,7 @@ do
   eq('every row of the frame is the same width', vim.fn.strdisplaywidth(top), vim.fn.strdisplaywidth(bottom))
   eq('border uses its own highlight group', virt[1][1][2], 'VirgilBorder')
 
-  -- a narrow window (a review's diff half) must not be overrun
+  -- a narrow window (a changeset's diff half) must not be overrun
   local columns = vim.o.columns
   vim.o.columns = 44
   virgil.note({ line = 18, summary = 'a summary far too long to ride in the border of a narrow window', rationale = 'and a rationale as well', author = 'claude' })
@@ -340,9 +340,9 @@ do
   store.update(git.repo(dir), id, { status = 'open' })
 end
 
------------------------------------------------------------------- review view
+-------------------------------------------------------------------- changeset
 
-section('review view')
+section('changeset')
 local rdir = new_repo('phase2')
 do
   vim.cmd('cd ' .. vim.fn.fnameescape(rdir))
@@ -380,7 +380,7 @@ do
   reset_state()
   edit(vim.fs.joinpath(rdir, 'code.go'))
   local res = virgil.review({ base = c1, head = c2 })
-  check('review opened', res ~= nil and #res.files == 1, res and vim.inspect(res.files))
+  check('changeset opened', res ~= nil and #res.files == 1, res and vim.inspect(res.files))
 
   local tab = vim.api.nvim_get_current_tabpage()
   local wins = vim.api.nvim_tabpage_list_wins(tab)
@@ -393,7 +393,7 @@ do
   end
   eq('both in diff mode', diffs, 2)
 
-  local data = review.tabs[tab]
+  local data = changeset.tabs[tab]
   eq('left side is the old blob', vim.b[data.left_buf].virgil_view.blob, git.file_blob(git.repo(rdir), c1, 'code.go'))
   -- 1. the right side is the real file on disk: LSP, treesitter, editing all work
   eq(
@@ -405,10 +405,10 @@ do
   eq('1. with a normal buftype (so language servers attach)', vim.bo[data.right_buf].buftype, '')
   eq('left side is read-only', vim.bo[data.left_buf].modifiable, false)
 
-  -- note on the new side, from inside the review
+  -- note on the new side, from inside the changeset
   vim.api.nvim_set_current_win(data.right)
   local n_new = virgil.note({ line = 4, summary = 'changed line', rationale = '' })
-  eq('note stamped with its review', n_new.context and n_new.context.review, res.spec)
+  eq('note stamped with its changeset', n_new.context and n_new.context.changeset, res.spec)
   check('hunk header recorded', (n_new.context.hunk_header or ''):match('^@@') ~= nil, n_new.context.hunk_header)
 
   -- 3. a note on a deleted line: anchored in the old blob
@@ -460,11 +460,11 @@ do
       before_right = p.line
     end
   end
-  review.close()
+  changeset.close()
   reset_state()
   virgil.review({ base = c1, head = c2 })
   local tab2 = vim.api.nvim_get_current_tabpage()
-  local d2 = review.tabs[tab2]
+  local d2 = changeset.tabs[tab2]
   render.render(d2.left_buf)
   render.render(d2.right_buf)
   eq('2. old-side note is back on the same line', render.notes_in(d2.left_buf)[1].line, before_left)
@@ -479,11 +479,11 @@ do
   eq('files() reports the changeset', #virgil.files(), 1)
   eq('files() counts notes', virgil.files()[1].notes, 2)
 
-  review.close()
-  eq('quit clears the review', review.state, nil)
+  changeset.close()
+  eq('quit clears the changeset', changeset.state, nil)
 end
 
-section('worktree review')
+section('worktree changeset')
 do
   write(rdir, 'code.go', {
     'package main',
@@ -494,8 +494,8 @@ do
   })
   reset_state()
   local res = virgil.review({ base = 'HEAD' })
-  check('uncommitted changes open as a review', res ~= nil and #res.files == 1)
-  local d = review.tabs[vim.api.nvim_get_current_tabpage()]
+  check('uncommitted changes open as a changeset', res ~= nil and #res.files == 1)
+  local d = changeset.tabs[vim.api.nvim_get_current_tabpage()]
   eq('right side is the working tree file', vim.bo[d.right_buf].buftype, '')
   local n = virgil.note({ line = 4, summary = 'dirty note' })
   eq('a dirty file anchors to the worktree', n.anchor.kind, 'worktree')
@@ -522,7 +522,7 @@ do
   check('and never as an orphan', not (pos and pos.status == 'orphan'), vim.inspect(pos))
 
 
-  review.close()
+  changeset.close()
 end
 
 ------------------------------------------------------------------- conversion
@@ -597,7 +597,7 @@ do
   local c1 = sh('git rev-parse HEAD', sdir)
 
   -- notes written while the file is clean: both address the committed blob,
-  -- which is also the blob the review's old side will hold
+  -- which is also the blob the changeset's old side will hold
   reset_state()
   edit(vim.fs.joinpath(sdir, 'code.go'))
   local n_keep = virgil.note({ line = 1, summary = 'untouched line' })
@@ -613,7 +613,7 @@ do
   })
   reset_state()
   virgil.review({ base = c1 })
-  local d = review.tabs[vim.api.nvim_get_current_tabpage()]
+  local d = changeset.tabs[vim.api.nvim_get_current_tabpage()]
   local function ids(b)
     render.render(b)
     return vim.tbl_map(function(p)
@@ -634,15 +634,15 @@ do
   vim.api.nvim_set_current_win(d.right)
   vim.cmd('only')
   eq('the old side is off screen', util.buf_is_displayed(d.left_buf), false)
-  eq('so it is no longer treated as a sibling', review.sibling_buf(d.right_buf), nil)
+  eq('so it is no longer treated as a sibling', changeset.sibling_buf(d.right_buf), nil)
   local alone = ids(d.right_buf)
   check('the old-side note is drawn where it can be seen', vim.tbl_contains(alone, n_chg.id), vim.inspect(alone))
   check('and the new-side note is still there', vim.tbl_contains(alone, n_keep.id))
 
-  review.close()
+  changeset.close()
 end
 
-section('review provenance')
+section('changeset provenance')
 local pdir = new_repo('provenance')
 do
   vim.cmd('cd ' .. vim.fn.fnameescape(pdir))
@@ -657,19 +657,19 @@ do
   reset_state()
   edit(vim.fs.joinpath(pdir, 'a.txt'))
   virgil.review({ base = 'base-branch', head = c2 })
-  local d = review.tabs[vim.api.nvim_get_current_tabpage()]
+  local d = changeset.tabs[vim.api.nvim_get_current_tabpage()]
   vim.api.nvim_set_current_win(d.right)
-  local n = virgil.note({ line = 2, summary = 'written in a review' })
+  local n = virgil.note({ line = 2, summary = 'written in a changeset' })
 
-  eq('the label a human reads is still recorded', n.context.review, 'base-branch...' .. c2)
+  eq('the label a human reads is still recorded', n.context.changeset, 'base-branch...' .. c2)
   eq('base is recorded as the commit it resolved to', n.context.base, c1)
   eq('together with the name it was typed as', n.context.base_ref, 'base-branch')
   eq('head is recorded as a commit', n.context.head, c2)
   check('a head already typed as a sha needs no second name', n.context.head_ref == nil, n.context.head_ref)
 
   -- the point of keeping commits: the same changeset under another spelling
-  eq('a filter naming the same commits matches', #virgil.notes({ review = c1 .. '..' .. c2 }), 1)
-  eq('a different changeset does not', #virgil.notes({ review = 'HEAD..worktree' }), 0)
+  eq('a filter naming the same commits matches', #virgil.notes({ changeset = c1 .. '..' .. c2 }), 1)
+  eq('a different changeset does not', #virgil.notes({ changeset = 'HEAD..worktree' }), 0)
 
   -- notes written before commits were kept have only their label, and it works
   local legacy = store.add(git.repo(pdir), {
@@ -679,30 +679,30 @@ do
     rationale = '',
     status = 'open',
     created_at = util.now(),
-    context = { review = 'base-branch..' .. c2 },
+    context = { changeset = 'base-branch..' .. c2 },
   })
-  check('a note with no commits still matches its own label', #virgil.notes({ review = legacy.context.review }) == 2)
-  review.close()
+  check('a note with no commits still matches its own label', #virgil.notes({ changeset = legacy.context.changeset }) == 2)
+  changeset.close()
 
-  -- reopened under a different spelling, the note is still *this* review's own
+  -- reopened under a different spelling, the note is still *this* changeset's own
   -- and must not be dimmed as belonging to someone else's
   reset_state()
   virgil.review({ base = c1, head = c2 })
-  check('the same commits under another spelling are one review', review.same_changeset(n.context, review.state))
-  check('and a note from elsewhere is not', not review.same_changeset(legacy.context, { spec = 'x..y', base_sha = c2 }))
-  review.close()
+  check('the same commits under another spelling are one changeset', changeset.same_changeset(n.context, changeset.state))
+  check('and a note from elsewhere is not', not changeset.same_changeset(legacy.context, { spec = 'x..y', base_sha = c2 }))
+  changeset.close()
 
-  -- a worktree review has no head commit, rather than a "worktree" revision
+  -- a worktree changeset has no head commit, rather than a "worktree" revision
   write(pdir, 'a.txt', { 'one', 'TWO', 'four' })
   reset_state()
   edit(vim.fs.joinpath(pdir, 'a.txt'))
   virgil.review({ base = 'HEAD' })
-  local d2 = review.tabs[vim.api.nvim_get_current_tabpage()]
+  local d2 = changeset.tabs[vim.api.nvim_get_current_tabpage()]
   vim.api.nvim_set_current_win(d2.right)
   local w = virgil.note({ line = 3, summary = 'against the worktree' })
-  eq('a worktree review records no head commit', w.context.head, nil)
+  eq('a worktree changeset records no head commit', w.context.head, nil)
   eq('and its base is the commit HEAD stood at', w.context.base, c2)
-  review.close()
+  changeset.close()
 end
 
 section('merge base')
@@ -727,19 +727,19 @@ do
   reset_state()
   edit(vim.fs.joinpath(mdir, 'base.txt'))
   local res = virgil.review({ base = trunk, head = 'feature' })
-  eq('the review is what the branch changed', #res.files, 1)
+  eq('the changeset is what the branch changed', #res.files, 1)
   eq('and not what the base branch moved on to', res.files[1].path, 'feature.txt')
-  eq('the old side is the commit they parted at', review.state.base_sha, parted_at)
+  eq('the old side is the commit they parted at', changeset.state.base_sha, parted_at)
   eq('and the spec says three-dot', res.spec, trunk .. '...feature')
-  review.close()
+  changeset.close()
 
-  -- a worktree review has no second commit to find a merge base with
+  -- a worktree changeset has no second commit to find a merge base with
   write(mdir, 'base.txt', { 'a', 'b', 'c' })
   reset_state()
   edit(vim.fs.joinpath(mdir, 'base.txt'))
   local w = virgil.review({ base = 'HEAD' })
-  eq('a worktree review stays two-dot', w.spec, 'HEAD..worktree')
-  review.close()
+  eq('a worktree changeset stays two-dot', w.spec, 'HEAD..worktree')
+  changeset.close()
 end
 
 section('changeset candidates')
@@ -768,7 +768,7 @@ do
     end
   end
 
-  local clean = review.candidates(repo)
+  local clean = changeset.candidates(repo)
   check('a clean tree offers nothing to review in it', not vim.tbl_contains(kinds(clean), 'worktree'), vim.inspect(kinds(clean)))
   local commits = vim.tbl_filter(function(i)
     return i.kind == 'commit'
@@ -778,35 +778,35 @@ do
   eq('and is the head of that diff', commits[1].head, second)
 
   write(cdir, 'a.txt', { 'three' })
-  local dirty = review.candidates(repo)
+  local dirty = changeset.candidates(repo)
   eq('uncommitted changes come first', dirty[1].kind, 'worktree')
   eq('measured from HEAD', dirty[1].base, 'HEAD')
   check('to the working tree, which is not a commit', dirty[1].head == nil)
   eq('counted', dirty[1].detail, '1 file')
 
-  -- a note that remembers its review puts that review back on the list
+  -- a note that remembers its changeset puts that changeset back on the list
   local function note_from(ctx)
     return store.add(repo, {
       anchor = { kind = 'blob', blob = git.file_blob(repo, second, 'a.txt'), path = 'a.txt', line = 1, end_line = 1, text = 'two' },
       author = 't',
-      summary = 'from a review',
+      summary = 'from a changeset',
       rationale = '',
       status = 'open',
       created_at = util.now(),
       context = ctx,
     })
   end
-  note_from({ review = 'root...second', base = root, head = second })
-  note_from({ review = 'root...second', base = root, head = second })
-  note_from({ review = 'gone...gone', base = string.rep('f', 40), head = string.rep('e', 40) })
+  note_from({ changeset = 'root...second', base = root, head = second })
+  note_from({ changeset = 'root...second', base = root, head = second })
+  note_from({ changeset = 'gone...gone', base = string.rep('f', 40), head = string.rep('e', 40) })
 
-  local listed = review.candidates(repo)
+  local listed = changeset.candidates(repo)
   local at, entry = first_of(listed, 'notes')
-  check('a review holding notes is offered', entry ~= nil, vim.inspect(kinds(listed)))
+  check('a changeset holding notes is offered', entry ~= nil, vim.inspect(kinds(listed)))
   eq('under the label it was recorded with', entry.label, 'root...second')
   eq('once, however many notes it holds', entry.detail, '2 notes')
   check('ahead of the commit list', at < (first_of(listed, 'commit')), vim.inspect(kinds(listed)))
-  eq('and a review whose commits are gone is not offered', #vim.tbl_filter(function(i)
+  eq('and a changeset whose commits are gone is not offered', #vim.tbl_filter(function(i)
     return i.kind == 'notes'
   end, listed), 1)
 end
@@ -827,7 +827,7 @@ do
   check('a repo with no GitHub remote offers no pull requests', not forge.available(repo))
   local kinds = vim.tbl_map(function(i)
     return i.kind
-  end, review.candidates(repo))
+  end, changeset.candidates(repo))
   check('and the row is not in the list', not vim.tbl_contains(kinds, 'pr'), vim.inspect(kinds))
 
   sh('git remote add origin https://github.com/example/example.git', fdir)
@@ -871,18 +871,18 @@ do
 
   local function sidebar_win(tab)
     for _, w in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
-      if vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(w)):find('review/files', 1, true) then
+      if vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(w)):find('changeset/files', 1, true) then
         return w
       end
     end
   end
   local tab = vim.api.nvim_get_current_tabpage()
-  eq('a review tab is two windows', #vim.api.nvim_tabpage_list_wins(tab), 2)
+  eq('a changeset tab is two windows', #vim.api.nvim_tabpage_list_wins(tab), 2)
   check('the list is off until asked for', sidebar_win(tab) == nil)
 
   local columns = vim.o.columns
   vim.o.columns = 200
-  eq('toggling turns it on', review.sidebar_toggle(), true)
+  eq('toggling turns it on', changeset.sidebar_toggle(), true)
   local sb = sidebar_win(tab)
   check('which adds a window', sb ~= nil)
   eq('outside the diff', vim.wo[sb].diff, false)
@@ -913,9 +913,9 @@ do
   -- open the second file from the list
   vim.api.nvim_set_current_win(sb)
   vim.api.nvim_win_set_cursor(sb, { 2, 0 })
-  review.sidebar_open_under_cursor()
+  changeset.sidebar_open_under_cursor()
   local tab2 = vim.api.nvim_get_current_tabpage()
-  eq('choosing a row opens that file', vim.t[tab2].virgil_review, 'beta.txt')
+  eq('choosing a row opens that file', vim.t[tab2].virgil_changeset, 'beta.txt')
   check('the new tab gets a list too', sidebar_win(tab2) ~= nil)
   local w2 = diff_widths(tab2)
   check('and its diff halves are even as well', math.abs(w2[1] - w2[2]) <= 1, vim.inspect(w2))
@@ -924,10 +924,10 @@ do
   check('and the mark follows', vim.startswith(moved[2], '▸'), table.concat(moved, ' / '))
   check('one buffer, shown in both tabs', vim.api.nvim_win_get_buf(sidebar_win(tab)) == buf)
 
-  eq('toggling turns it off', review.sidebar_toggle(), false)
+  eq('toggling turns it off', changeset.sidebar_toggle(), false)
   check('in the tab you are in', sidebar_win(tab2) == nil)
   check('and in the ones you are not', sidebar_win(tab) == nil, 'a stranded list reads as a failed toggle')
-  review.close()
+  changeset.close()
 end
 
 --------------------------------------------------------------------- summary

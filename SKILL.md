@@ -74,7 +74,7 @@ nvim --server "$SOCK" --remote-expr "json_encode(v:lua.require'virgil'.status())
 - `view.address` — `blob:<sha>` means committed content (an immutable address);
   `worktree:<path>` means content not committed yet. This decides where a note anchors.
 - `view.kind == "blob"` means the human is looking at the **old-revision side** of a window.
-- A `review` key means a review is open (§7).
+- A `changeset` key means a changeset is open (§7).
 
 ## 4. Writing a note
 
@@ -140,7 +140,7 @@ Incoming line numbers anchor against each file's **current content**. The return
 the number of notes imported. The other direction (`export`) takes
 `{'format': 'agent-context', 'out': '/tmp/out.json'}`.
 
-## 7. If a review is open
+## 7. If a changeset is open
 
 ```bash
 nvim --server "$SOCK" --remote-expr "json_encode(v:lua.require'virgil'.review({'base': 'origin/main'}))"
@@ -155,17 +155,17 @@ With both `base` and `head` the diff runs from their merge base (`base...head`),
 matches what a forge shows for a pull request. Don't compute the merge base yourself; pass
 the branch or ref you mean.
 
-Notes written while a review is open record their origin automatically:
+Notes written while a changeset is open record their origin automatically:
 
 ```json
-{"review": "origin/main..pr-1", "base": "9f3c1ab…", "base_ref": "origin/main",
+{"changeset": "origin/main..pr-1", "base": "9f3c1ab…", "base_ref": "origin/main",
  "head": "abc1234…", "head_ref": "pr-1",
  "hunk_header": "@@ -6,2 +6,2 @@ func mint(id int) string {"}
 ```
 
-`review` is the label a human reads; `base` and `head` are the commits it resolved to at
+`changeset` is the label a human reads; `base` and `head` are the commits it resolved to at
 the time. Refs move, so only the commits identify the changeset later — `head` is absent
-when the review was against the working tree. `notes({'review': …})` accepts either
+when the changeset was against the working tree. `notes({'changeset': …})` accepts either
 spelling and matches on commits, so `origin/main..pr-1` finds notes recorded as
 `main..abc1234`.
 
