@@ -46,7 +46,7 @@ cat > /tmp/payload.json <<'JSON'
 {"path": "bot.go", "line": 9,
  "summary": "don't conflate \"empty\" with \"error\"",
  "rationale": "Callers can't tell a failure from a legitimately empty id.\nNewlines survive too.",
- "author": "claude"}
+ "author": "agent"}
 JSON
 nvim --server "$SOCK" --remote-expr "json_encode(v:lua.require'virgil'.note(json_decode(join(readfile('/tmp/payload.json'), ''))))"
 ```
@@ -79,7 +79,7 @@ nvim --server "$SOCK" --remote-expr "json_encode(v:lua.require'virgil'.status())
 ## 4. Writing a note
 
 ```bash
-nvim --server "$SOCK" --remote-expr "json_encode(v:lua.require'virgil'.note({'path': 'bot.go', 'line': 6, 'summary': 'id''s zero case isn''t handled', 'author': 'claude'}))"
+nvim --server "$SOCK" --remote-expr "json_encode(v:lua.require'virgil'.note({'path': 'bot.go', 'line': 6, 'summary': 'id''s zero case isn''t handled', 'author': 'agent'}))"
 ```
 
 One line is the only hard rule. If the rationale is long or has quotes in it, use the file
@@ -133,7 +133,7 @@ cat > /tmp/notes.json <<'JSON'
   {"newRange": {"start": 9, "end": 9}, "summary": "…", "rationale": "…"},
   {"newRange": {"start": 5, "end": 5}, "summary": "…", "rationale": "…"}]}]}
 JSON
-nvim --server "$SOCK" --remote-expr "v:lua.require'virgil'.import({'file': '/tmp/notes.json', 'author': 'claude'})"
+nvim --server "$SOCK" --remote-expr "v:lua.require'virgil'.import({'file': '/tmp/notes.json', 'author': 'agent'})"
 ```
 
 Incoming line numbers anchor against each file's **current content**. The return value is

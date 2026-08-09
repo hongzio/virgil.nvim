@@ -292,7 +292,7 @@ do
   -- a narrow window (a changeset's diff half) must not be overrun
   local columns = vim.o.columns
   vim.o.columns = 44
-  virgil.note({ line = 18, summary = 'a summary far too long to ride in the border of a narrow window', rationale = 'and a rationale as well', author = 'claude' })
+  virgil.note({ line = 18, summary = 'a summary far too long to ride in the border of a narrow window', rationale = 'and a rationale as well', author = 'agent' })
   render.render(buf)
   marks = vim.api.nvim_buf_get_extmarks(buf, util.NS, 0, -1, { details = true })
   local widest, framed = 0, 0

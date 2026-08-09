@@ -6,7 +6,7 @@ read by external agents over RPC.
 
 ```
   5 // mintMakerOrderID returns a fresh id for a maker order.
-    ┌─ ● seq is not synchronised ───────────────────────────── claude ─┐
+    ┌─ ● seq is not synchronised ────────────────────────────── agent ─┐
     │ reconcile() runs on another goroutine and touches b.seq without  │
     │ the mutex; two makers can mint the same id under load.           │
     └──────────────────────────────────────────────────────────────────┘
@@ -195,7 +195,7 @@ nvim --server "$SOCK" --remote-expr "json_encode(v:lua.require'virgil'.status())
 
 # attach a note (anchored to the current view's content address)
 nvim --server "$SOCK" --remote-expr \
-  "json_encode(v:lua.require'virgil'.note({'line': 1036, 'summary': '…', 'rationale': '…', 'author': 'claude'}))"
+  "json_encode(v:lua.require'virgil'.note({'line': 1036, 'summary': '…', 'rationale': '…', 'author': 'agent'}))"
 
 # move the screen
 nvim --server "$SOCK" --remote-expr "v:lua.require'virgil'.open('internal/bot.go', {'line': 1036})"
@@ -218,34 +218,36 @@ path and also puts it on the `+` clipboard.
 that survive `--remote-expr`, and — the part that matters most — what is and isn't worth a
 note. It is plain Markdown, so any agent that takes a document as context can read it.
 
-For **Claude Code** it is a skill, and installing it is a symlink. Personal, so it follows
-you into every repository:
+Where your agent loads instructions from a directory of its own, installing it is a
+symlink. Personal, so it follows you into every repository:
 
 ```sh
-mkdir -p ~/.claude/skills/virgil
-ln -s "$PWD/SKILL.md" ~/.claude/skills/virgil/SKILL.md
+mkdir -p ~/<agent-skills-dir>/virgil
+ln -s "$PWD/SKILL.md" ~/<agent-skills-dir>/virgil/SKILL.md
 ```
 
 Or scoped to one project, and committed with it, so everyone working on the repository
 gets it:
 
 ```sh
-mkdir -p .claude/skills/virgil
-ln -s ../../../SKILL.md .claude/skills/virgil/SKILL.md
+mkdir -p <project-skills-dir>/virgil
+ln -s ../../../SKILL.md <project-skills-dir>/virgil/SKILL.md
 ```
 
+The `../` count matches the depth of the directory you put the link in — three levels up
+from `<project-skills-dir>/virgil/` is the repository root.
+
 A symlink rather than a copy: the manual then changes when virgil does, and there is one
-file to keep honest instead of two. The directory name is what the skill is called, so keep
-it `virgil` — the `name` in SKILL.md's frontmatter matches it.
+file to keep honest instead of two. Where the directory name is what the manual is called,
+keep it `virgil` — the `name` in SKILL.md's frontmatter matches it.
 
-Claude Code reads the `description` from that frontmatter and reaches for the skill on its
-own when the work fits — reviewing a diff, pinning a finding, checking what was left
-earlier. You can also ask for it by name with `/virgil`. A skill installed mid-session is
-picked up by the next one.
+That frontmatter also carries a `description`. An agent that loads instructions on demand
+reads it and reaches for the manual on its own when the work fits — reviewing a diff,
+pinning a finding, checking what was left earlier.
 
-Nothing about virgil requires it. The skill is a manual, not an interface: an agent that
-has never read it can still call the same `--remote-expr` API, it will just be worse at
-deciding what deserves a note.
+Nothing about virgil requires any of this. The manual is a manual, not an interface: an
+agent that has never read it can still call the same `--remote-expr` API, it will just be
+worse at deciding what deserves a note.
 
 ### Lua API
 
