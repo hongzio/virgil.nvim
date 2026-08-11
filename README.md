@@ -4,15 +4,82 @@ commits, reading changes you haven't committed yet — the same way of leaving a
 in all three. Notes live on disk, follow the code as it changes, and can be written and
 read by external agents over RPC.
 
+## What it looks like
+
+**1. You ask an agent to review a pull request.** It drives your Neovim over the socket —
+opening the changeset, then pinning each finding onto the line it is about.
+
 ```
-  5 // mintMakerOrderID returns a fresh id for a maker order.
-    ┌─ ● seq is not synchronised ────────────────────────────── agent ─┐
-    │ reconcile() runs on another goroutine and touches b.seq without  │
-    │ the mutex; two makers can mint the same id under load.           │
-    └──────────────────────────────────────────────────────────────────┘
-  6 func (b *Bot) mintMakerOrderID() string {
-  7         if b.cfg.OriginID != 0 {
+> review PR #7 with virgil
+
+● Bash(nvim --server $SOCK --remote-expr "…virgil.review({'base': 'origin/main',
+      'head': 'a1b2c3d', 'title': '#7 fix the retry loop'})")
+  ⎿  {"spec":"origin/main...a1b2c3d","files":[…3 files…]}
+
+● Bash(nvim --server $SOCK --remote-expr "…virgil.note({'path': 'internal/bot.go',
+      'line': 1036, 'summary': 'seq is not synchronised', 'author': 'agent', …})")
+  ⎿  {"id":"n_8f3a","status":"open"}
+
+● Left 3 notes on #7. The id race in mintMakerOrderID is the one to read first.
 ```
+
+**2. Later — tabs closed, editor restarted — you pick that changeset back out.** The notes
+outlive both. `:Virgil review` with no arguments lists what is worth reviewing, and a
+changeset an agent left notes on is a row there, not a pair of revisions you have to
+remember:
+
+```
+changeset>
+  worktree  uncommitted changes             2 files
+▸ notes     #7 fix the retry loop           3 notes
+  branch    origin/main...feat/retry        what this branch adds
+  pr        pull requests…                  ask gh
+  commit    d4faa9b docs: the manual is…    hongzio · 2 hours ago
+```
+
+**3. The notes are waiting on the code**, in the side-by-side diff of that pull request —
+each one on the side that still holds the line it was written on:
+
+```
+ internal/bot.go @ origin/main         │ internal/bot.go
+ ──────────────────────────────────────┼─────────────────────────────────────────────
+                                       │ ┌─ ● seq is not synchronised ────── agent ─┐
+                                       │ │ reconcile() runs on another goroutine    │
+                                       │ │ and touches b.seq without the mutex; two │
+                                       │ │ makers can mint the same id under load.  │
+                                       │ └──────────────────────────────────────────┘
+ func (b *Bot) mintMakerOrderID() {    │ func (b *Bot) mintMakerOrderID() string {
+         if b.cfg.OriginID != 0 {      │         if b.cfg.OriginID != 0 {
+```
+
+The right-hand side is the real file on disk, so `gd` works, and you fix it in place. The
+note goes away when you say so — `:Virgil remove`, or `<C-x>` in `:Virgil notes`.
+
+**A changeset is not where notes live, though — code is.** Point the same agent at a file
+instead of a changeset, and the answer lands on the lines it is about rather than in a chat
+log you scroll back through:
+
+```
+> read internal/pool.go with virgil and note anything dangerous
+
+ 41  func (b *Bot) reap() {
+ 42      b.mu.Lock()
+ 43      for _, s := range b.sessions {
+             ┌─ ● lock order is the reverse of send() ─────── agent ──┐
+             │ send() takes s.mu first and b.mu second. Run the two   │
+             │ at once and neither of them moves again.               │
+             └────────────────────────────────────────────────────────┘
+ 44          s.mu.Lock()
+```
+
+That one is in no diff at all — it is two functions disagreeing, and nobody changed either
+of them today.
+
+None of the three steps above is required, either. `:Virgil note` on any line you are
+reading gives you the same object: the same list, the same drift handling when the code
+moves under it, no changeset and no agent anywhere.
+
+## How a note is drawn
 
 Notes appear as `virt_lines` **directly above the code line**. They never touch the real
 text, so line numbers don't shift and diff alignment doesn't break. The box aligns to the
@@ -80,7 +147,7 @@ map('n', '<leader>vx', '<Plug>(virgil-remove)',           { desc = 'Virgil delet
 map('n', '<leader>vt', '<Plug>(virgil-toggle)',           { desc = 'Virgil toggle visibility' })
 map('n', '<leader>vl', '<Cmd>Virgil notes<CR>',           { desc = 'Virgil list notes' })
 
-map('n', '<leader>vd', '<Cmd>Virgil review<CR>',          { desc = 'Virgil pick a changeset' })
+map('n', '<leader>vr', '<Cmd>Virgil review<CR>',          { desc = 'Virgil pick a changeset' })
 map('n', '<leader>vR', '<Cmd>Virgil review HEAD<CR>',     { desc = 'Virgil review worktree' })
 map('n', '<leader>vf', '<Cmd>Virgil files<CR>',           { desc = 'Virgil changed files' })
 map('n', '<leader>vs', '<Cmd>Virgil sidebar<CR>',         { desc = 'Virgil toggle file list' })
@@ -114,73 +181,52 @@ and its pair move between files, `:Virgil files` picks any file directly, and
   M lua/virgil/changeset.lua      +319 -10
 ```
 
-`<CR>` opens a row, `q` closes the list. Because a changeset is one tab per file, this is one
-window per tab over a **single shared buffer** — what differs between tabs is which row
-carries the `▸`, and that is a redraw rather than another window's worth of state. Turning
-it off closes it in every tab at once, including the ones you have not visited: a list left
-standing in a tab you later walk into reads as the toggle having failed. It is off by
-default (`changeset.sidebar = true` opens it with every changeset, `changeset.sidebar_width` sets
-the column).
+`<CR>` opens a row, `q` closes the list. Turning it off closes it in every tab at once,
+including the ones you have not visited: a list left standing in a tab you later walk into
+reads as the toggle having failed. It is off by default (`changeset.sidebar = true` opens it
+with every changeset, `changeset.sidebar_width` sets the column).
 
 With no arguments it asks which changeset instead: what is uncommitted, **the changesets that
 already hold notes**, what this branch adds over the one it tracks, and recent commits
-against their parents. The middle one is the point — after an agent leaves notes on a
-changeset, that changeset is a list entry rather than a pair of revisions you have to
-remember. The last row hands you the command line, where ref completion already works. It
-is `vim.ui.select`, so whatever picker you have configured is the one you get.
+against their parents. The last row hands you the command line, where ref completion already
+works. It is `vim.ui.select`, so whatever picker you have configured is the one you get.
 
-Where `gh` is installed and the repository has a GitHub remote, one more row opens the
-list of pull requests. It is a row you choose rather than one the list waits for: asking
-`gh` is a network call, and the other rows should not be held up by it. Picking a pull
-request reviews it between its base branch and its head **commit** — a head branch name
-only means something in the fork it lives in. If that commit is not in the clone yet,
-virgil asks before fetching `pull/N/head`; nothing reaches the network without being
-chosen. Neither `gh` nor GitHub is a dependency — without them the row is simply absent.
+Where `gh` is installed and the repository has a GitHub remote, one more row opens the list
+of pull requests. It is a row you choose rather than one the list waits for, so nothing
+reaches the network without being asked for. A pull request is reviewed between its base
+branch and its head **commit** — a head branch name only means something in the fork it
+lives in — and if that commit is not in the clone yet, virgil asks before fetching
+`pull/N/head`. Neither `gh` nor GitHub is a dependency; without them the row is absent.
 
-With two commits the diff is taken from where their histories parted, git's
-`base...head` — the same range a forge shows for a pull request, and what the changeset spec
-prints. Measuring from the tip of the base branch instead would fold every commit the base
-gained since the branch point into the changeset, backwards: files the change never touched,
-listed as though it reverted them. A changeset against the working tree keeps the plain
-two-dot `base..worktree`; there is no second commit to part from.
+With two commits the diff is taken from where their histories parted, git's `base...head`,
+the same range a forge shows for a pull request. Measuring from the tip of the base branch
+instead would fold every commit the base gained since the branch point into the changeset,
+backwards: files the change never touched, listed as though it reverted them. A changeset
+against the working tree keeps the plain two-dot `base..worktree`.
 
 The left side is a read-only scratch buffer holding the old revision's blob; the right side
 is **the real file on disk**. That means on the right, `gd` (go to definition), finding
 references, and fixing and saving in place all work exactly as they normally do. This
 asymmetry is the reason this plugin exists.
 
-A note is drawn on **exactly one side** — whichever side still holds the line it was
-written on. A note on rewritten code stays on the left; a note on new code appears only on
-the right; a note on a line the changeset never touched goes to the new side, since that is
-the real file. Only when neither side kept the line intact does the content address decide.
-On a screen showing the same line side by side in two windows, drawing the note twice is
-unreadable — and worse, on the opposite side that line sits inside a hunk and would read as
-`stale`, which isn't true: nothing has changed since the note was written, you are just
-looking at a different revision.
-
-The choice is made **per line, not per file**. Addressing alone would be simpler, but a
-file's sha changes the moment you fix a typo anywhere in it, and every note in that file
-would march over to the old side at once. Splitting sides also stops the moment the other
-half leaves the screen: handing a note to a window nobody is looking at is
-indistinguishable from losing it.
+A note is drawn on **exactly one side** — whichever side still holds the line it was written
+on, decided **per line, not per file**. A note on rewritten code stays on the left; a note
+on new code appears only on the right; a note on a line the changeset never touched goes to
+the new side, since that is the real file. Only when neither side kept the line intact does
+the content address decide. Drawing it on both would be unreadable, and on the side that
+lost the line it would sit inside a hunk and read as `stale` when nothing has changed at
+all — you are just looking at a different revision.
 
 A note written inside a changeset records where it came from: the label you typed
-(`origin/main..pr-1`), and the two commits that label resolved to. Refs move — `HEAD` moves
-with every commit, a branch moves with every fetch — so the label alone cannot name that
-changeset again tomorrow, and only the commits can. Two changesets over the same commits are
-therefore one changeset however they were spelled, which is what `notes({ changeset = … })`
-matches on and what decides whether a note is drawn as this screen's own or as background.
-None of it takes part in position calculation; that is the anchor's job alone.
-
-A changeset can also carry a `title` — a name of its own, rather than the two revisions it
-resolves to. Choosing a pull request sets one (`#7 fix the retry loop`), and
-`virgil.review({ base, head, title })` takes one from an agent. It is written onto the notes
-made there and is what the picker offers them back under, so a pull request you left notes
-on is findable by its number rather than by a sha you would have to recognise. Like the
-hunk header, it is written down and read back out: nothing matches on it, and a changeset
-nobody named is still offered under its spec.
-
-One changeset per instance. Starting a new one tears down the previous changeset's tabs.
+(`origin/main..pr-1`), the two commits it resolved to, and a `title` where the changeset had
+a name of its own — `#7 fix the retry loop`, set by choosing a pull request or passed to
+`virgil.review({ base, head, title })`. Refs move, so only the commits can name that
+changeset again tomorrow: two changesets over the same commits are one changeset however
+they were spelled, and that is what `notes({ changeset = … })` matches on and what decides
+whether a note is drawn as this screen's own or as background. The title matches nothing —
+it is what the picker offers those notes back under, so a pull request you left notes on is
+findable by its number rather than by a sha. None of it takes part in position calculation;
+that is the anchor's job alone.
 
 ## Agents
 
@@ -341,6 +387,8 @@ the drift itself is the signal that the code changed underneath it.
 | Projection cache invalidation | Cache per `changedtick`, with rendering debounced at 60ms. When the anchor content and the view content are identical, `vim.diff` is skipped entirely |
 | Note cleanup policy | `prune` only removes notes that have been unlocatable for 30 days and notes closed for 90 days. The command asks for confirmation before deleting |
 | Concurrent changesets | One per instance. A new changeset tears down the previous changeset's tabs on the way in |
+| Which side of a diff owns a note | Per line, not per file. A file's sha changes the moment you fix a typo anywhere in it, and addressing by file would march every note in it over to the old side at once. Splitting sides also stops the moment the other half leaves the screen: handing a note to a window nobody is looking at is indistinguishable from losing it |
+| One sidebar across a changeset's tabs | One window per tab over a single shared buffer — what differs between tabs is which row carries the `▸`, and that is a redraw rather than another window's worth of state |
 | Filetype of the left-hand blob | `filetype` is left unset and only treesitter (or `syntax` if unavailable) is enabled. You get highlighting without a language server attaching to a buffer that has no file. Change it with `changeset.highlight = 'filetype'` |
 | Socket lifetime | The first instance takes the canonical path; later ones fall back to `<path>.<pid>`. Socket files from dead instances are cleaned up automatically |
 | Telling agent notes from human ones | It goes no further than stamping the name (`author`) dimly in the note's header. Colors aren't split because the distinction that matters is not "who wrote it" but "is this about the change in front of me" — and emphasis versus dimming already carries that |
