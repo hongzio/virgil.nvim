@@ -97,8 +97,11 @@ Calling `setup()` is optional. The defaults work on their own.
 
 Requires Neovim 0.10+ (0.12 recommended — its default `diffopt` is
 `inline:char,linematch:40`) and git. There are no hard dependencies: `fzf-lua` /
-`snacks.nvim` are used as the picker if present, otherwise it falls back to quickfix, and
-`gh` adds pull requests to the changeset picker if you happen to have it.
+`snacks.nvim` are used for every list virgil puts up if present, and `gh` adds pull
+requests to the changeset picker if you happen to have it. Without either plugin — or with
+`picker = 'quickfix'` — the note list falls back to the quickfix window and the
+choose-one lists to `vim.ui.select`, so a `vim.ui.select` handler of your own still wins
+there.
 
 ## Usage
 
@@ -188,8 +191,8 @@ with every changeset, `changeset.sidebar_width` sets the column).
 
 With no arguments it asks which changeset instead: what is uncommitted, **the changesets that
 already hold notes**, what this branch adds over the one it tracks, and recent commits
-against their parents. The last row hands you the command line, where ref completion already
-works. It is `vim.ui.select`, so whatever picker you have configured is the one you get.
+against their parents. The last row hands you the command line, where ref completion
+already works.
 
 Where `gh` is installed and the repository has a GitHub remote, one more row opens the list
 of pull requests. It is a row you choose rather than one the list waits for, so nothing

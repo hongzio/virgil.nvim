@@ -115,6 +115,41 @@ local function has(mod)
   return pcall(require, mod)
 end
 
+--- Choose one item from a list, through whichever picker is available.
+---
+--- Deliberately `vim.ui.select`-shaped, with `vim.ui.select` as the last resort
+--- rather than the only option: `picker = 'fzf-lua'` should govern every list
+--- virgil puts up, not `:Virgil notes` alone. Both plugins ship their own
+--- implementation of this exact contract, abort included, so there is nothing
+--- to do here but pick one. `quickfix` is a jump list rather than a chooser,
+--- so that setting lands on `vim.ui.select` too.
+---@param items table[]
+---@param opts table|nil `{ prompt, format_item }`
+---@param on_choice fun(item: any|nil, index: integer|nil)
+function M.select(items, opts, on_choice)
+  local want = config.options.picker
+  if want == 'auto' then
+    want = has('fzf-lua') and 'fzf-lua' or (has('snacks') and 'snacks' or 'quickfix')
+  end
+
+  if want == 'fzf-lua' then
+    -- fzf-lua exports only register/deregister, and registering would hand it
+    -- `vim.ui.select` for the whole editor — a decision that is the user's, not
+    -- virgil's. The provider behind it is what we actually want.
+    local ok, provider = pcall(require, 'fzf-lua.providers.ui_select')
+    if ok and type(provider.ui_select) == 'function' then
+      return provider.ui_select(items, opts, on_choice)
+    end
+  elseif want == 'snacks' then
+    local ok, snacks = pcall(require, 'snacks')
+    if ok and snacks.picker and type(snacks.picker.select) == 'function' then
+      return snacks.picker.select(items, opts, on_choice)
+    end
+  end
+
+  vim.ui.select(items, opts, on_choice)
+end
+
 local function abs_key(path, line)
   return vim.fs.normalize(vim.fn.fnamemodify(path, ':p')) .. ':' .. tostring(line or 1)
 end

@@ -58,7 +58,7 @@ local function pick_pull_request(repo)
       notify('no open pull requests')
       return
     end
-    vim.ui.select(prs, {
+    require('virgil.ui').select(prs, {
       prompt = 'pull requests',
       format_item = function(pr)
         return ('#%-5d %s  %s%s'):format(
@@ -157,7 +157,7 @@ local subcommands = {
     end
     table.insert(items, { kind = 'other', label = 'other revisions…', detail = 'type them out' })
 
-    vim.ui.select(items, {
+    require('virgil.ui').select(items, {
       prompt = 'changeset',
       format_item = function(it)
         return ('%-9s %s  %s'):format(it.kind, fit(it.label, 52), it.detail or '')
@@ -189,7 +189,7 @@ local subcommands = {
       vim.notify('virgil: no changed files', vim.log.levels.INFO, { title = 'virgil' })
       return
     end
-    vim.ui.select(files, {
+    require('virgil.ui').select(files, {
       prompt = changeset.state and ('files · ' .. changeset.state.spec) or 'changed files',
       format_item = function(f)
         return ('%s %-50s +%d -%d%s'):format(f.status, f.path, f.added, f.removed, f.notes > 0 and ('  ' .. f.notes .. '♦') or '')
