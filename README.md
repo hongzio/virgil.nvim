@@ -23,6 +23,11 @@ opening the changeset, then pinning each finding onto the line it is about.
 ● Left 3 notes on #7. The id race in mintMakerOrderID is the one to read first.
 ```
 
+Those calls land in the Neovim you are sitting in front of, so leaving the diff open means
+watching the review arrive: each note is drawn the moment it is written, and the
+changed-file list's counts tick up with it. Nothing polls and nothing is reloaded. And if
+you were not watching, nothing is lost.
+
 **2. Later — tabs closed, editor restarted — you pick that changeset back out.** The notes
 outlive both. `:Virgil review` with no arguments lists what is worth reviewing, and a
 changeset an agent left notes on is a row there, not a pair of revisions you have to
@@ -191,8 +196,8 @@ with every changeset, `changeset.sidebar_width` sets the column).
 
 With no arguments it asks which changeset instead: what is uncommitted, **the changesets that
 already hold notes**, what this branch adds over the one it tracks, and recent commits
-against their parents. The last row hands you the command line, where ref completion
-already works.
+against their parents. The last row hands you the command line, where ref completion already
+works. It is `vim.ui.select`, so whatever picker you have configured is the one you get.
 
 Where `gh` is installed and the repository has a GitHub remote, one more row opens the list
 of pull requests. It is a row you choose rather than one the list waits for, so nothing
