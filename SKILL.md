@@ -123,6 +123,11 @@ isn't a note, it's a report — summarize it in chat instead.
 `rationale` should hold **evidence, not a verdict**. Not "this is dangerous" but
 "reconcile() touches b.seq from another goroutine without the mutex".
 
+Write to ASD-STE100 (Simplified Technical English) and the Google developer
+documentation style guide. Whatever language a note is written in, their core
+philosophy always applies: short sentences, active voice, one idea per sentence,
+one meaning per word.
+
 ## 6. Many at once
 
 For several notes, a sidecar JSON file avoids quoting hell.
