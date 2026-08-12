@@ -21,12 +21,14 @@ local function set_highlights()
     VirgilBorder = { link = 'FloatBorder' },
     VirgilIcon = { link = 'DiagnosticInfo' },
     VirgilSummary = { link = 'Normal' },
-VirgilRationale = { link = 'Comment' },
-    VirgilAuthor = { link = 'NonText' },
+    VirgilRationale = { link = 'Comment' },
+    -- Comment, not NonText: NonText is for characters that aren't really in the
+    -- buffer, and a colorscheme may draw it in the background color.
+    VirgilAuthor = { link = 'Comment' },
     VirgilStale = { link = 'DiagnosticWarn' },
     VirgilOrphan = { link = 'DiagnosticError' },
     VirgilResolved = { link = 'DiagnosticOk' },
-    VirgilDim = { link = 'NonText' },
+    VirgilDim = { link = 'Comment' },
   }
   for name, def in pairs(defs) do
     def.default = true
