@@ -308,6 +308,48 @@ do
   vim.o.columns = columns
 end
 
+section('editing notes')
+do
+  local repo = git.repo(dir)
+  local buf = edit(vim.fs.joinpath(dir, 'a.txt'))
+  local note = virgil.note({ path = 'a.txt', line = 6, summary = 'first wording', rationale = 'because' })
+
+  virgil.edit(note.id)
+  local cbuf = vim.api.nvim_get_current_buf()
+  local text = table.concat(vim.api.nvim_buf_get_lines(cbuf, 0, -1, false), '\n')
+  eq('the composer opens on what the note says now', text, 'first wording\n\nbecause')
+
+  vim.api.nvim_buf_set_lines(cbuf, 0, -1, false, { 'second wording', '', 'a better reason' })
+  vim.cmd('write') -- BufWriteCmd, the same path <C-s> takes
+  local after = store.get(repo, note.id)
+  eq('saving rewrites the summary', after.summary, 'second wording')
+  eq('and the rationale under it', after.rationale, 'a better reason')
+  eq('the anchor stays where it was', after.anchor.line, note.anchor.line)
+  eq('and keeps its address', after.anchor.blob, note.anchor.blob)
+  eq('the status is not touched', after.status, 'open')
+  check('the edit is stamped', after.updated_at ~= nil, vim.inspect(after.updated_at))
+
+  -- an emptied composer is a cancel: `remove` is the only thing that deletes
+  virgil.edit(note.id)
+  vim.api.nvim_buf_set_lines(vim.api.nvim_get_current_buf(), 0, -1, false, { '' })
+  vim.cmd('write')
+  local kept = store.get(repo, note.id)
+  check('emptying the composer leaves the note as it was', kept ~= nil and kept.summary == 'second wording')
+
+  -- with no id it edits the note at the cursor, which is what the keymap does
+  vim.api.nvim_set_current_buf(buf)
+  render.render(buf)
+  vim.api.nvim_win_set_cursor(0, { 6, 0 })
+  virgil.edit()
+  eq(
+    'no id means the note at the cursor',
+    vim.api.nvim_buf_get_lines(vim.api.nvim_get_current_buf(), 0, -1, false)[1],
+    'second wording'
+  )
+  vim.cmd('write')
+  eq('a missing id says so instead of opening a window', virgil.edit('n-nope'), nil)
+end
+
 section('removing notes')
 do
   local repo = git.repo(dir)

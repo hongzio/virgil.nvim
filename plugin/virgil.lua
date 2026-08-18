@@ -301,6 +301,10 @@ local plugs = {
   ['<Plug>(virgil-prev-note)'] = function()
     require('virgil').prev_note()
   end,
+  -- rewrites the words of the note at the cursor; where it points does not move
+  ['<Plug>(virgil-edit)'] = function()
+    require('virgil').edit()
+  end,
   -- the note at the cursor, and irreversibly: nothing else in virgil destroys one
   ['<Plug>(virgil-remove)'] = function()
     require('virgil').remove()

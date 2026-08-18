@@ -230,6 +230,44 @@ function M.note(opts)
   return nil
 end
 
+--- Rewrite a note's text in the composer, prefilled with what it says now.
+--- Only the words change: the anchor, the status and the context stay as they
+--- were, so an edit never moves a note off the code it was written about.
+--- Emptying the buffer cancels — `remove` is still the only thing that destroys
+--- a note.
+---@param id string|nil the note to edit; omit it for the one at the cursor
+---@return nil
+function M.edit(id)
+  local list, repo = resolve_ids(id)
+  if #list == 0 or not repo then
+    return nil
+  end
+  local note = store.get(repo, list[1])
+  if not note then
+    util.warn('no note ' .. tostring(list[1]))
+    return nil
+  end
+
+  local a = note.anchor
+  local where = a.line == a.end_line and tostring(a.line) or (a.line .. '-' .. a.end_line)
+  ui.compose({
+    title = ('edit · %s:%s'):format(a.path or '?', where),
+    summary = note.summary,
+    rationale = note.rationale,
+  }, function(summary, rationale)
+    -- read back through the store: the window was open for a while, and the
+    -- note may have been removed from another instance meanwhile
+    local updated = store.update(repo, note.id, { summary = summary, rationale = rationale })
+    if not updated then
+      util.warn(('note %s is gone'):format(note.id))
+      return
+    end
+    render.refresh()
+    util.notify(('note %s updated'):format(note.id))
+  end)
+  return nil
+end
+
 --- Change a note in place. Agents use this to fix their own wording.
 ---@param id string
 ---@param fields table

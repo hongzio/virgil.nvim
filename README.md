@@ -128,18 +128,25 @@ there.
 In the compose window the first non-empty line is the summary and everything below it is
 the rationale. `<C-s>` saves, `q` cancels.
 
+`<Plug>(virgil-edit)` reopens that window on the note at the cursor, filled in with what it
+says now. Only the words change — where the note points, its status and the changeset it
+came from stay as they were. Emptying the window cancels the edit rather than deleting the
+note: `:Virgil remove` is still the only thing that destroys one.
+
 In the `:Virgil notes` list (when using fzf-lua):
 
 | Key | Action |
 |---|---|
 | `<CR>` | jump to the note |
+| `<C-e>` | edit the note's text |
 | `<C-x>` | **delete the note** (irreversible) |
 
-Selecting several rows with `<Tab>` acts on all of them at once. fzf-lua's default `<C-x>`
-only drops a row from the temporary list (the note itself survives) while the header says
-"delete", which is easy to misread — so it was rebound to do what the header says. When
-the picker falls back to snacks or quickfix these actions aren't available and only the
-jump works.
+Selecting several rows with `<Tab>` acts on all of them at once — except `<C-e>`, which has
+no sensible meaning for several notes and says so rather than editing one of the rows you
+marked. fzf-lua's default `<C-x>` only drops a row from the temporary list (the note itself
+survives) while the header says "delete", which is easy to misread — so it was rebound to
+do what the header says. When the picker falls back to snacks or quickfix these actions
+aren't available and only the jump works.
 
 ### Keymaps
 
@@ -151,6 +158,7 @@ lot, and the pairs on brackets:
 local map = vim.keymap.set
 
 map({ 'n', 'x' }, '<leader>vv', '<Plug>(virgil-note)',    { desc = 'Virgil note' })
+map('n', '<leader>ve', '<Plug>(virgil-edit)',             { desc = 'Virgil edit note at cursor' })
 map('n', '<leader>vx', '<Plug>(virgil-remove)',           { desc = 'Virgil delete note at cursor' })
 map('n', '<leader>vt', '<Plug>(virgil-toggle)',           { desc = 'Virgil toggle visibility' })
 map('n', '<leader>vl', '<Cmd>Virgil notes<CR>',           { desc = 'Virgil list notes' })
@@ -312,6 +320,8 @@ virgil.status()                    -- current view's content address, path, curs
 virgil.note({ path, line, end_line, summary, rationale, author })
 virgil.notes({ path, status, changeset, id })  -- stored anchor + projection into the current view
 virgil.update(id, { summary = '…' })
+virgil.edit(id)                    -- the same rewrite, through the compose window
+                                   -- Omit the id for the note under the cursor
 virgil.open(path, { line = 1036, rev = nil })
 virgil.remove(id)                  -- delete; nothing else in virgil destroys a note
                                    -- id also accepts a { id1, id2 } list. Omit it for the note under the cursor

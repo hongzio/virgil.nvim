@@ -78,7 +78,9 @@ function M.compose(opts, on_done)
       table.remove(rest)
     end
     if summary == '' then
-      util.warn('empty note discarded')
+      -- an emptied composer is a cancel, and on an existing note that is not the
+      -- same thing as discarding it: say which one happened
+      util.warn(opts.summary and opts.summary ~= '' and 'left as it was' or 'empty note discarded')
       finished = true
       close()
       return
@@ -200,6 +202,27 @@ local function note_actions(index, fill)
       end),
       reload = true,
       header = 'delete note',
+    },
+    -- no `reload`: this one takes you out of the list and into the composer,
+    -- and the window has to be gone before the float opens over where it was
+    ['ctrl-e'] = {
+      fn = function(selected)
+        local ids = ids_of(selected)
+        if #ids == 0 then
+          util.warn('could not tell which note that row is')
+          return
+        end
+        if #ids > 1 then
+          -- unlike delete, there is no sensible way to do several at once, and
+          -- silently picking one of the marked rows is worse than saying so
+          util.warn('edit takes one note at a time')
+          return
+        end
+        vim.schedule(function()
+          require('virgil').edit(ids[1])
+        end)
+      end,
+      header = 'edit note',
     },
   }
 end
