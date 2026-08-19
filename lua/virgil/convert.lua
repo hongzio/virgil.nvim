@@ -26,6 +26,8 @@ function M.to_agent_context(notes)
         author = reply.author ~= '' and reply.author or nil,
         body = reply.body,
         created_at = reply.created_at,
+        question = reply.question,
+        answers = reply.answers,
       })
     end
     table.insert(by_path[path], {
@@ -34,6 +36,7 @@ function M.to_agent_context(notes)
       rationale = note.rationale ~= '' and note.rationale or nil,
       author = note.author ~= '' and note.author or nil,
       status = note.status,
+      question = note.question,
       id = note.id,
       replies = replies,
     })
@@ -66,7 +69,7 @@ function M.to_markdown(notes)
       table.insert(out, ('\n## %s\n'):format(current))
     end
     local span = note.anchor.end_line ~= note.anchor.line and ('%d-%d'):format(note.anchor.line, note.anchor.end_line) or tostring(note.anchor.line)
-    table.insert(out, ('- **L%s** %s  `%s`'):format(span, note.summary, note.status))
+    table.insert(out, ('- **L%s** %s%s  `%s`'):format(span, note.question and '? ' or '', note.summary, note.status))
     if note.rationale ~= '' then
       for _, l in ipairs(vim.split(note.rationale, '\n', { plain = true })) do
         table.insert(out, '  ' .. l)
@@ -75,7 +78,8 @@ function M.to_markdown(notes)
     -- nested under the note, which is what a reply is
     for _, reply in ipairs(note.replies or {}) do
       local lines = vim.split(reply.body, '\n', { plain = true })
-      table.insert(out, ('  - **%s** %s'):format(reply.author ~= '' and reply.author or '?', lines[1] or ''))
+      local mark = reply.question and '? ' or (reply.answers and '↳ ' or '')
+      table.insert(out, ('  - **%s** %s%s'):format(reply.author ~= '' and reply.author or '?', mark, lines[1] or ''))
       for i = 2, #lines do
         table.insert(out, '    ' .. lines[i])
       end
@@ -190,6 +194,10 @@ function M.import(repo, opts)
             author = reply.author or '',
             body = reply.body or reply.text or '',
             created_at = reply.created_at,
+            -- `answers` names an id this repository never issued, and the ids
+            -- it did issue are new ones. The link cannot survive the crossing;
+            -- the question mark can
+            question = reply.question,
           })
         end
       end
@@ -199,6 +207,7 @@ function M.import(repo, opts)
         summary = ann.summary or ann.title or '',
         rationale = ann.rationale or ann.body or '',
         status = ann.status or 'open',
+        question = ann.question == true or nil,
         created_at = util.now(),
         context = opts.changeset and { changeset = opts.changeset } or nil,
         replies = replies,

@@ -28,6 +28,10 @@ local function set_highlights()
     -- Comment, not NonText: NonText is for characters that aren't really in the
     -- buffer, and a colorscheme may draw it in the background color.
     VirgilAuthor = { link = 'Comment' },
+    -- not DiagnosticInfo: VirgilIcon already links there, and a question has to
+    -- read as a different thing from an ordinary note at a glance
+    VirgilQuestion = { link = 'DiagnosticHint' },
+    VirgilPending = { link = 'Comment' },
     VirgilStale = { link = 'DiagnosticWarn' },
     VirgilOrphan = { link = 'DiagnosticError' },
     VirgilResolved = { link = 'DiagnosticOk' },
@@ -108,6 +112,34 @@ end
 local subcommands = {
   note = function(_, range)
     require('virgil').note(range and { line = range[1], end_line = range[2] } or {})
+  end,
+
+  -- asks about the note at the cursor. A *new* question is `:Virgil note` and
+  -- then `<C-q>` in the composer; this one adds to a note that already exists
+  ask = function(args)
+    require('virgil').ask(args[1])
+  end,
+
+  questions = function()
+    local git = require('virgil.git')
+    local repo = git.repo(vim.api.nvim_buf_get_name(0)) or git.repo(vim.uv.cwd())
+    local function build()
+      local items = {}
+      for _, q in ipairs(require('virgil').questions({ state = 'all' })) do
+        local pos = q.projected
+        local state = q.pending and 'asking' or (q.failed and 'failed' or (q.answered and 'answered' or 'open'))
+        items[#items + 1] = {
+          filename = repo and git.abs(repo, q.path) or q.path,
+          lnum = pos and pos.line or q.line,
+          col = 1,
+          note_id = q.note_id,
+          summary = q.summary,
+          text = ('[%s] %s'):format(state, vim.split(q.text or '', '\n', { plain = true })[1] or ''),
+        }
+      end
+      return items
+    end
+    require('virgil.ui').pick(build, { title = 'virgil questions' })
   end,
 
   notes = function()
@@ -326,6 +358,10 @@ local plugs = {
   ['<Plug>(virgil-reply)'] = function()
     require('virgil').reply()
   end,
+  -- asks the note at the cursor, and sends it to whatever `question.agent` names
+  ['<Plug>(virgil-ask)'] = function()
+    require('virgil').ask()
+  end,
   -- both of these ask which reply when the note has more than one
   ['<Plug>(virgil-reply-edit)'] = function()
     require('virgil').update_reply()
@@ -430,5 +466,18 @@ vim.api.nvim_create_autocmd('VimEnter', {
   callback = function()
     require('virgil').start_server()
     lazy_render().refresh()
+  end,
+})
+
+-- Agents outlive the editor that started them unless they are told not to, and
+-- an agent still working on a question nobody is there to read is spending for
+-- nothing.
+vim.api.nvim_create_autocmd('VimLeavePre', {
+  group = group,
+  callback = function()
+    local ok, question = pcall(require, 'virgil.question')
+    if ok then
+      question.cancel_all()
+    end
   end,
 })

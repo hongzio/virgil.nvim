@@ -12,8 +12,12 @@ local compose_seq = 0
 --- `plain` drops that split: the whole buffer is one piece of text, which is
 --- what a reply is. A reply has no summary to head it — it is already hanging
 --- under the note that has one.
+---
+--- The last argument is always a `meta` table saying *how* it was saved —
+--- `<C-s>` and `<C-q>` write the same words and differ only in `meta.question`.
+--- It is a table even when nothing is set, so callers never guard for nil.
 ---@param opts table `{ title, summary, rationale }`, or `{ title, plain, body }`
----@param on_done fun(summary: string, rationale: string) `fun(body)` when `plain`
+---@param on_done fun(summary: string, rationale: string, meta: table) `fun(body, meta)` when `plain`
 function M.compose(opts, on_done)
   opts = opts or {}
   local buf = vim.api.nvim_create_buf(false, true)
@@ -51,7 +55,7 @@ function M.compose(opts, on_done)
     border = 'rounded',
     title = ' ' .. (opts.title or 'virgil note') .. ' ',
     title_pos = 'left',
-    footer = ' <C-s> save   q cancel ',
+    footer = ' <C-s> save   <C-q> ask   q cancel ',
     footer_pos = 'right',
   })
   vim.wo[win].wrap = true
@@ -75,10 +79,12 @@ function M.compose(opts, on_done)
     close()
   end
 
-  local function submit()
+  ---@param meta table|nil how it was saved, e.g. `{ question = true }`
+  local function submit(meta)
     if finished then
       return
     end
+    meta = meta or {}
     local content = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 
     if opts.plain then
@@ -96,7 +102,7 @@ function M.compose(opts, on_done)
       finished = true
       vim.bo[buf].modified = false
       close()
-      on_done(table.concat(text, '\n'))
+      on_done(table.concat(text, '\n'), meta)
       return
     end
 
@@ -121,20 +127,32 @@ function M.compose(opts, on_done)
     finished = true
     vim.bo[buf].modified = false
     close()
-    on_done(summary, table.concat(rest, '\n'))
+    on_done(summary, table.concat(rest, '\n'), meta)
   end
 
-  vim.keymap.set({ 'n', 'i' }, '<C-s>', submit, { buffer = buf, desc = 'virgil: save note' })
+  vim.keymap.set({ 'n', 'i' }, '<C-s>', function()
+    submit()
+  end, { buffer = buf, desc = 'virgil: save note' })
+  -- the same words, marked as a question. Offered whether or not an agent is
+  -- configured: the mark is durable, and an agent on the socket can answer it
+  vim.keymap.set({ 'n', 'i' }, '<C-q>', function()
+    submit({ question = true })
+  end, { buffer = buf, desc = 'virgil: save as a question' })
   vim.keymap.set('n', 'q', function()
     finished = true
     vim.bo[buf].modified = false
     close()
   end, { buffer = buf, desc = 'virgil: cancel note' })
-  vim.keymap.set('n', 'ZZ', submit, { buffer = buf })
+  -- `ZZ` and `:w` mean save, not ask: only `<C-q>` marks a question
+  vim.keymap.set('n', 'ZZ', function()
+    submit()
+  end, { buffer = buf })
 
   vim.api.nvim_create_autocmd('BufWriteCmd', {
     buffer = buf,
-    callback = submit,
+    callback = function()
+      submit()
+    end,
   })
 
   vim.cmd('startinsert')

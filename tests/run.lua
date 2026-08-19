@@ -1282,6 +1282,442 @@ do
   check('markdown nests them under the note', md:find('%s+%- %*%*other%-nvim%*%*') ~= nil, md)
 end
 
+------------------------------------------------------------------- questions
+
+section('questions')
+do
+  reset_state()
+  local dir = new_repo('questions')
+  write(dir, 'lock.go', numbered(40, 'go '))
+  sh('git add -A && git commit -qm base', dir)
+  local buf = edit(vim.fs.joinpath(dir, 'lock.go'))
+  local repo = git.repo(dir)
+  local config = require('virgil.config')
+  local question = require('virgil.question')
+  local store = require('virgil.store')
+
+  -- 1. the mark and the link, on disk and back
+  local note = virgil.note({ line = 10, summary = 'why is this mutex here?', question = true, author = 'hongzio' })
+  check('a note can be a question', note.question == true)
+  reset_state()
+  local reloaded = store.get(git.repo(dir), note.id)
+  eq('and the mark survives the store', reloaded.question, true)
+  eq('one question, unanswered', #virgil.questions({}), 1)
+  eq('and it names the note itself', virgil.questions({})[1].question_id, note.id)
+
+  -- 2. a later reply is not an answer. Only a reply that says what it answers
+  --    is, which is also the only shape that survives a merge
+  virgil.reply(note.id, { body = 'good question, monday', author = 'someone' })
+  eq('a reply that follows a question does not close it', #virgil.questions({}), 1)
+  virgil.reply(note.id, { body = 'it guards the retry counter', author = 'claude', answers = note.id })
+  eq('naming the question does', #virgil.questions({}), 0)
+  eq('and it reads back as answered', virgil.questions({ state = 'answered' })[1].answer.author, 'claude')
+
+  -- 3. a reply can ask too, and the thread carries both at once
+  local follow = virgil.reply(note.id, { body = 'then why is it not a RWMutex?', author = 'hongzio', question = true })
+  eq('a reply can be a question', follow.question, true)
+  local open = virgil.questions({})
+  eq('the open question is the follow-up', #open, 1)
+  eq('named by the reply id', open[1].question_id, follow.id)
+  eq('and it knows which note it hangs on', open[1].note_id, note.id)
+  eq('question filter reaches notes too', #virgil.notes({ question = true }), 1)
+
+  -- 4. export carries the mark; import cannot carry the link, because the ids
+  --    on the other side are the destination repository's to hand out
+  local ctx = virgil.export({ format = 'agent-context' })
+  check('agent-context marks the question', ctx:find('"question"', 1, true) ~= nil, ctx:sub(1, 200))
+  local md = virgil.export({ format = 'markdown' })
+  check('markdown marks the answer', md:find('↳', 1, true) ~= nil, md)
+
+  -- 5. dispatching. `cat` reads the prompt on stdin and prints it straight
+  --    back, so the reply it produces *is* the prompt we built
+  reset_state()
+  config.setup({ question = { agent = 'plain', command = { 'cat' }, author = nil, auto = false } })
+  local done, err
+  local sent = question.dispatch(git.repo(dir), note.id, follow.id, {
+    on_done = function(ok, e)
+      done, err = ok, e
+    end,
+  })
+  check('dispatch reports it went', sent, err)
+  vim.wait(5000, function()
+    return done ~= nil
+  end)
+  eq('and the run finished', done, true)
+  local landed
+  for _, q in ipairs(virgil.questions({ state = 'answered' })) do
+    if q.question_id == follow.id then
+      landed = q
+    end
+  end
+  check('the answer landed as a reply', landed ~= nil)
+  local body = landed.answer.body
+  eq('stamped with the adapter name', landed.answer.author, 'plain')
+  check('the prompt named the file and line', body:find('lock.go:10', 1, true) ~= nil, body:sub(1, 300))
+  check('quoted the code around it', body:find('go line 10', 1, true) ~= nil)
+  check('carried the note it hangs on', body:find('why is this mutex here', 1, true) ~= nil)
+  check('and asked the question last', body:find('not a RWMutex', 1, true) ~= nil)
+  check('told the agent not to reply over the socket', body:find('Do not call `virgil.reply`', 1, true) ~= nil)
+  eq('nothing is left in flight', next(question.jobs), nil)
+
+  -- 6. a run that fails writes no reply. A failure is transient and the thread
+  --    is not: a note that says "exited with 3" for ever is worse than a gap
+  local q2 = virgil.reply(note.id, { body = 'and the timeout?', author = 'hongzio', question = true })
+  config.setup({ question = { command = { 'sh', '-c', 'echo boom >&2; exit 3' } } })
+  done = nil
+  question.dispatch(git.repo(dir), note.id, q2.id, {
+    on_done = function(ok, e)
+      done, err = ok, e
+    end,
+  })
+  vim.wait(5000, function()
+    return done ~= nil
+  end)
+  eq('a failed ask writes nothing', done, false)
+  eq('the question is still open', #virgil.questions({ note_id = note.id }), 1)
+  local job = question.jobs[question.key(git.repo(dir), q2.id)]
+  check('and the failure is kept where it can be seen', job and job.state == 'failed', job and job.err)
+  check('saying what went wrong', job.err:find('boom', 1, true) ~= nil, job.err)
+
+  -- an agent that prints nothing has not answered
+  config.setup({ question = { command = { 'true' } } })
+  done = nil
+  question.dispatch(git.repo(dir), note.id, q2.id, {
+    on_done = function(ok)
+      done = ok
+    end,
+  })
+  vim.wait(5000, function()
+    return done ~= nil
+  end)
+  eq('silence is not an answer', done, false)
+  eq('and still nothing was written', #virgil.questions({ note_id = note.id }), 1)
+
+  -- 7. no agent configured is a notice, not a failure: the mark is already
+  --    written, and something on the socket can still answer it
+  -- `setup{ agent = nil }` cannot say this: a nil in a table literal is a key
+  -- that was never there, so the merge would keep what is already set
+  config.options.question.agent = nil
+  local ok2, why = question.dispatch(git.repo(dir), note.id, q2.id)
+  eq('nothing is sent without an agent', ok2, false)
+  check('and it says so', why and why:find('question.agent', 1, true) ~= nil, why)
+  eq('the question is still there to be read', #virgil.questions({ note_id = note.id }), 1)
+  question.cancel_all()
+end
+
+section('rewording a question')
+do
+  reset_state()
+  local dir = new_repo('question-edit')
+  write(dir, 'f.txt', numbered(10))
+  sh('git add -A && git commit -qm base', dir)
+  edit(vim.fs.joinpath(dir, 'f.txt'))
+  local config = require('virgil.config')
+  local question = require('virgil.question')
+  local store = require('virgil.store')
+  local repo = git.repo(dir)
+
+  -- 1. a run in flight was handed the old wording, so it is stopped rather
+  --    than left to come back answering a question nobody is asking now
+  config.setup({ question = { agent = 'plain', command = { 'sh', '-c', 'sleep 30; echo late' }, auto = false } })
+  local note = virgil.note({ line = 3, summary = 'original wording?', question = true, author = 'h' })
+  question.dispatch(repo, note.id, note.id)
+  check('the ask is in flight', question.jobs[question.key(repo, note.id)] ~= nil)
+  virgil.update(note.id, { summary = 'rewritten wording?' })
+  eq('rewording stops it', question.jobs[question.key(repo, note.id)], nil)
+  eq('and nothing was written', #virgil.questions({}), 1)
+
+  -- 2. an answer already there keeps its words and loses its link: the thread
+  --    reads in order, and `unreply` is still the only thing that destroys one
+  virgil.reply(note.id, { body = 'because of the counter', author = 'claude', answers = note.id })
+  eq('answered', #virgil.questions({ state = 'answered' }), 1)
+  virgil.update(note.id, { summary = 'a third wording?' })
+  eq('rewording reopens the question', #virgil.questions({}), 1)
+  local kept = store.get(repo, note.id).replies
+  eq('the old answer is still in the thread', #kept, 1)
+  eq('with its words untouched', kept[1].body, 'because of the counter')
+  eq('and no longer claiming to answer', kept[1].answers, nil)
+
+  -- 3. only the question's own words count. The rationale is not the question
+  virgil.reply(note.id, { body = 'still the counter', author = 'claude', answers = note.id })
+  virgil.update(note.id, { rationale = 'some added evidence' })
+  eq('changing the rationale leaves the answer standing', #virgil.questions({ state = 'answered' }), 1)
+  virgil.update(note.id, { status = 'resolved' })
+  eq('and so does changing the status', #virgil.questions({ state = 'answered' }), 1)
+
+  -- 4. the same for a reply that asks
+  local follow = virgil.reply(note.id, { body = 'and the timeout?', author = 'h', question = true })
+  virgil.reply(note.id, { body = 'thirty seconds', author = 'claude', answers = follow.id })
+  eq('the follow-up is answered', #virgil.questions({ state = 'answered' }), 2)
+  virgil.update_reply(note.id, follow.id, { body = 'and the retry budget?' })
+  local open = virgil.questions({})
+  eq('rewording a reply-question reopens it', #open, 1)
+  eq('the one that was reworded', open[1].question_id, follow.id)
+  local bodies = {}
+  for _, r in ipairs(store.get(repo, note.id).replies) do
+    table.insert(bodies, r.body)
+  end
+  check('and its answer is still there to read', vim.tbl_contains(bodies, 'thirty seconds'), vim.inspect(bodies))
+
+  -- 5. rewording sends it again, on the same switch that governs the first ask
+  config.setup({ question = { command = { 'sh', '-c', 'echo re-answered' }, auto = true } })
+  virgil.update_reply(note.id, follow.id, { body = 'and the backoff?' })
+  vim.wait(5000, function()
+    return next(question.jobs) == nil
+  end)
+  local again
+  for _, q in ipairs(virgil.questions({ state = 'answered' })) do
+    if q.question_id == follow.id then
+      again = q
+    end
+  end
+  check('auto asks the new wording', again ~= nil)
+  eq('and the new answer is the answer', again.answer.body, 're-answered')
+
+  question.cancel_all()
+  config.options.question.agent = nil
+end
+
+section('question rendering')
+do
+  reset_state()
+  local dir = new_repo('question-render')
+  write(dir, 'r.txt', numbered(30))
+  sh('git add -A && git commit -qm base', dir)
+  local buf = edit(vim.fs.joinpath(dir, 'r.txt'))
+  local repo = git.repo(dir)
+  local render = require('virgil.render')
+  local question = require('virgil.question')
+  local util = require('virgil.util')
+  require('virgil.config').options.question.agent = nil
+
+  local function rows_of(virt)
+    local out = {}
+    for _, line in ipairs(virt) do
+      table.insert(out, table.concat(vim.tbl_map(function(c)
+        return c[1]
+      end, line)))
+    end
+    return out
+  end
+  local function drawn()
+    local out = {}
+    for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, util.NS, 0, -1, { details = true })) do
+      vim.list_extend(out, rows_of(m[4].virt_lines))
+    end
+    return out
+  end
+  local function even(rows)
+    local w = vim.fn.strdisplaywidth(rows[1] or '')
+    for _, row in ipairs(rows) do
+      if vim.fn.strdisplaywidth(row) ~= w then
+        return false, row
+      end
+    end
+    return true
+  end
+
+  local note = virgil.note({ line = 8, summary = 'why the retry?', question = true, author = 'hongzio' })
+  render.render(buf)
+  local rows = drawn()
+  check('a waiting question opens the box with ?', rows[1]:find('?', 1, true) ~= nil, rows[1])
+  check('and every row still measures the same', even(rows))
+
+  -- an answer takes the mark off: a box that stays different for ever is noise
+  virgil.reply(note.id, { body = 'the upstream 429s', author = 'claude', answers = note.id })
+  render.render(buf)
+  rows = drawn()
+  check('an answered question goes back to the ordinary icon', rows[1]:find('●', 1, true) ~= nil, rows[1])
+  check('the frame holds', even(rows))
+
+  -- a reply that asks says so in its own divider
+  local follow = virgil.reply(note.id, { body = 'for how long?', author = 'hongzio', question = true })
+  render.render(buf)
+  rows = drawn()
+  local asked = false
+  for _, row in ipairs(rows) do
+    asked = asked or (vim.startswith(row, '├') and row:find('? hongzio', 1, true) ~= nil)
+  end
+  check('the asking reply is marked in its divider', asked, vim.inspect(rows))
+  check('and the frame still holds', even(rows))
+
+  -- an agent working on it says so, as an ordinary row inside the same box
+  question.jobs[question.key(repo, follow.id)] = {
+    repo = repo,
+    note_id = note.id,
+    question_id = follow.id,
+    agent = { name = 'claude' },
+    state = 'running',
+  }
+  render.render(buf)
+  rows = drawn()
+  local pending = false
+  for _, row in ipairs(rows) do
+    pending = pending or row:find('asking claude', 1, true) ~= nil
+  end
+  check('a run in flight is drawn', pending, vim.inspect(rows))
+  check('without breaking the frame', even(rows))
+
+  -- and a failure stays put until somebody retries or deletes: a failure that
+  -- vanished before it was read is not honest
+  question.jobs[question.key(repo, follow.id)].state = 'failed'
+  question.jobs[question.key(repo, follow.id)].err = 'claude is not on your PATH'
+  render.render(buf)
+  rows = drawn()
+  local failed = false
+  for _, row in ipairs(rows) do
+    failed = failed or row:find('ask failed', 1, true) ~= nil
+  end
+  check('a failed ask is drawn too', failed, vim.inspect(rows))
+  check('and wraps inside the frame', even(rows))
+  question.cancel_all()
+
+  -- the narrow case: it is the *decorated* label that has to fit, or a name
+  -- that just squeezed in overruns the frame the moment it is marked
+  vim.cmd('vsplit')
+  local narrow = util.buf_width(buf)
+  check('the split really is narrow', narrow < 60, narrow)
+  local wide = ('n'):rep(math.max(1, narrow - 10))
+  virgil.reply(note.id, { body = 'still?', author = wide, question = true })
+  render.render(buf)
+  rows = drawn()
+  local widest = 0
+  for _, row in ipairs(rows) do
+    widest = math.max(widest, vim.fn.strdisplaywidth(row))
+  end
+  check('the frame stays inside the window', widest <= narrow, widest .. ' > ' .. narrow)
+  check('and the box is square', even(rows))
+  vim.cmd('only')
+end
+
+section('question adapters')
+do
+  local agents = require('virgil.agents')
+
+  -- the two session models, as argv. Pure functions, so no process is started
+  local claude = agents.resolve('claude')
+  eq('claude brings its own command', table.concat(claude.command, ' '), 'claude -p')
+  check('and mints the session id itself', claude.seeds_session)
+  local fresh = claude.argv({ command = claude.command, args = {}, new_session = 'u-1' })
+  eq('a new claude session is planted', table.concat(fresh, ' '), 'claude -p --session-id u-1')
+  local again = claude.argv({ command = claude.command, args = {}, resuming = true, session = 'u-1' })
+  eq('and carried on by id', table.concat(again, ' '), 'claude -p --resume u-1')
+
+  local codex = agents.resolve('codex')
+  check('codex does not mint the id', not codex.seeds_session)
+  check('and wants somewhere to put the answer', codex.wants_scratch)
+  local c1 = codex.argv({ command = codex.command, args = {}, scratch = '/tmp/x' })
+  eq('a new codex run', table.concat(c1, ' '), 'codex exec --json -o /tmp/x')
+  local c2 = codex.argv({ command = codex.command, args = {}, scratch = '/tmp/x', resuming = true, session = 't-9' })
+  -- `resume` is a subcommand in the middle of the line, which is the whole
+  -- reason an adapter builds the argv rather than virgil appending flags to one
+  eq('carries on through a subcommand', table.concat(c2, ' '), 'codex exec resume --json -o /tmp/x t-9 -')
+  eq('and reads the id back out of the events', codex.session({
+    stdout = '{"type":"thread.started","thread_id":"t-9"}\n{"type":"turn.started"}\n',
+  }), 't-9')
+  eq('a run that started no thread has no session', codex.session({ stdout = 'not json\n' }), nil)
+
+  local _, err = agents.resolve('gemini')
+  check('an unknown name says so', err and err:find('unknown question.agent', 1, true) ~= nil, err)
+  local _, err2 = agents.resolve('plain')
+  check('plain insists on a command', err2 and err2:find('no command', 1, true) ~= nil, err2)
+  local _, err3 = agents.resolve('plain', 'llm -m gpt')
+  check('and a command has to be a list', err3 and err3:find('list like', 1, true) ~= nil, err3)
+  local custom = agents.resolve({ name = 'mine', command = { 'x' } })
+  eq('a table is an adapter too', custom.name, 'mine')
+  check('filled out from plain', type(custom.answer) == 'function')
+end
+
+section('question sessions')
+do
+  reset_state()
+  local dir = new_repo('sessions')
+  write(dir, 'a.txt', numbered(20))
+  sh('git add -A && git commit -qm base', dir)
+  edit(vim.fs.joinpath(dir, 'a.txt'))
+  local config = require('virgil.config')
+  local question = require('virgil.question')
+
+  -- a stub adapter: records what it was given, answers from a fixed script
+  local seen = {}
+  local script = {}
+  local function stub(over)
+    return vim.tbl_extend('force', {
+      name = 'stub',
+      command = { 'true' },
+      sessions = true,
+      seeds_session = true,
+      wants_scratch = false,
+      argv = function(ctx)
+        table.insert(seen, { session = ctx.session, new_session = ctx.new_session, resuming = ctx.resuming, prompt = ctx.prompt })
+        local next_result = table.remove(script, 1) or { code = 0 }
+        -- the real work is faked by choosing what the process does
+        return next_result.code == 0 and { 'true' } or { 'false' }
+      end,
+      stdin = function(ctx)
+        return ctx.prompt
+      end,
+      answer = function()
+        return 'because of the retry counter'
+      end,
+      session = function(_, ctx)
+        return ctx.resuming and ctx.session or ctx.new_session
+      end,
+    }, over or {})
+  end
+
+  local note = virgil.note({ line = 5, summary = 'why?', question = true, author = 'hongzio' })
+  config.setup({ question = { agent = stub(), auto = false } })
+
+  local done
+  local function ask(question_id)
+    done = nil
+    question.dispatch(git.repo(dir), note.id, question_id, {
+      on_done = function(ok)
+        done = ok
+      end,
+    })
+    vim.wait(5000, function()
+      return done ~= nil
+    end)
+    return done
+  end
+
+  eq('the first ask goes through', ask(note.id), true)
+  check('with a session minted for it', seen[1].new_session ~= nil and seen[1].resuming == nil, vim.inspect(seen[1]))
+  local answer = virgil.questions({ state = 'answered' })[1].answer
+  local stored = require('virgil.store').get_reply(git.repo(dir), note.id, answer.id)
+  eq('the answer records the session', stored.session, seen[1].new_session)
+  eq('and which adapter made it', stored.agent, 'stub')
+
+  local follow = virgil.reply(note.id, { body = 'and the RWMutex?', author = 'hongzio', question = true })
+  eq('the follow-up goes through', ask(follow.id), true)
+  eq('carrying the same session on', seen[2].session, seen[1].new_session)
+  eq('as a resume', seen[2].resuming, true)
+  check('and its prompt is the short one', #seen[2].prompt < #seen[1].prompt, ('%d vs %d'):format(#seen[2].prompt, #seen[1].prompt))
+  check('still saying what is being asked', seen[2].prompt:find('RWMutex', 1, true) ~= nil)
+
+  -- a session that has been swept away fails the way any error does, so the
+  -- only safe reading is to start over rather than wedge the thread for good
+  local q3 = virgil.reply(note.id, { body = 'and the timeout?', author = 'hongzio', question = true })
+  script = { { code = 1 } } -- the resume fails, the retry after it does not
+  local before = #seen
+  eq('a dead session still gets an answer', ask(q3.id), true)
+  eq('by way of exactly one retry', #seen - before, 2)
+  eq('the first try resumed', seen[before + 1].resuming, true)
+  eq('and the second started over', seen[before + 2].resuming, nil)
+
+  -- switching tools makes the stored id meaningless, so it is not offered
+  seen = {}
+  local q4 = virgil.reply(note.id, { body = 'once more', author = 'hongzio', question = true })
+  config.setup({ question = { agent = stub({ name = 'other' }) } })
+  eq('the ask under a different adapter goes through', ask(q4.id), true)
+  eq('and does not reuse the other tool\'s session', seen[1].resuming, nil)
+
+  question.cancel_all()
+  config.setup({ question = { agent = nil, command = nil } })
+end
+
 --------------------------------------------------------------------- summary
 
 io.write(('\n%d passed, %d failed\n'):format(passed, #failures))

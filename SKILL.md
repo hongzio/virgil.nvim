@@ -1,6 +1,6 @@
 ---
 name: virgil
-description: Leave and read code notes in a running Neovim (virgil.nvim RPC). Use when pinning a finding from reading code or reviewing a diff onto the screen the human is actually looking at, when checking notes left earlier, or when driving the human's cursor to a specific file and line.
+description: Leave and read code notes in a running Neovim (virgil.nvim RPC). Use when pinning a finding from reading code or reviewing a diff onto the screen the human is actually looking at, when checking notes left earlier, when a human has left a question on a line of code and is waiting for an answer, or when driving the human's cursor to a specific file and line.
 ---
 
 # virgil — leaving notes on code
@@ -199,7 +199,8 @@ Each entry carries the stored `anchor` plus a `projected` position for the curre
 - `"orphan"` — the anchored content can't be found (an abandoned commit, say)
 - No `projected` at all means that content isn't in the current view (a deleted line, for instance)
 
-Each entry also carries `replies`, the thread hanging under that note — see §10.
+Each entry also carries `replies`, the thread hanging under that note — see §10. A note or
+a reply may carry `question: true`, meaning somebody is waiting on an answer — see §11.
 
 ## 9. Amending and deleting
 
@@ -232,12 +233,58 @@ A reply has no anchor and no status: it goes where its note goes, and it dies wi
 `body` is the whole of it — there is no summary line, because the note above it already
 has one. Threads are one level deep; answering a reply is another reply on the same note.
 
+If what you are writing **answers a question**, say which one:
+
+```bash
+… .reply('n-abc', {'body': 'it guards b.seq — mint.go:88', 'answers': 'r-def', 'author': 'agent'})
+```
+
+Without `answers` the question stays open however long the thread grows. Being the newest
+reply does not close it, and nor does saying the right thing.
+
 ```bash
 … .update_reply('n-abc', 'r-def', {'body': '…'})   # reword your own
 … .unreply('n-abc', 'r-def')                       # delete it. Irreversible
 ```
 
-## 11. Moving the human's screen
+`session` and `agent` on a reply are virgil's own bookkeeping for agents it started
+itself. Leave them alone.
+
+## 11. Questions
+
+A note or a reply marked `question: true` is a person waiting for an answer. Find them:
+
+```bash
+nvim --server "$SOCK" --remote-expr "json_encode(v:lua.require'virgil'.questions({'state': 'unanswered'}))"
+```
+
+Each row is one question:
+
+```json
+{"note_id": "n-abc", "question_id": "r-def", "kind": "reply",
+ "text": "why is this mutex held across the retry?", "author": "hongzio",
+ "answered": false, "pending": true, "summary": "the retry loop",
+ "path": "mint.go", "line": 88, "projected": {"line": 91, "status": "ok"}}
+```
+
+- `question_id` is what an answer names in `answers`. For a note-level question it is the
+  note's own id; for a reply it is the reply's.
+- `pending: true` means virgil already has an agent working on this one. Leave it — a
+  second answer only makes the thread longer.
+- `state` also takes `'answered'`, `'pending'` and `'all'`; `'unanswered'` is the default
+  because that is the only state anybody is waiting on.
+
+If a question is reworded after you answered it, your answer keeps its words but loses the
+link, and the question comes back as unanswered. Nothing you wrote is thrown away — answer
+the new wording underneath it. Deleting an answer with `unreply` reopens its question the
+same way.
+
+**Answering is an ordinary reply that names the question** (§10). Read the code before you
+answer — the question is about that line, and `path`/`line` say which. Cite `file:line`
+for anything you looked at, and say plainly when you cannot work it out rather than
+producing something plausible.
+
+## 12. Moving the human's screen
 
 To put the code you're describing in front of them:
 
@@ -249,7 +296,7 @@ Passing `rev` opens that revision's content read-only: `{'line': 6, 'rev': 'HEAD
 The return value is the post-jump `status()`, so you can confirm it landed. The human may
 be in the middle of editing — move them **only when it matters**.
 
-## 12. When things fail
+## 13. When things fail
 
 | Symptom | Meaning |
 |---|---|
@@ -257,13 +304,15 @@ be in the middle of editing — move them **only when it matters**.
 | `status().view.kind == "none"` | The human isn't in a file buffer (a terminal, a picker). Attach with an explicit `path` |
 | `remove()` returns `false` | No such id |
 | `reply()` returns `null` | No such note id, or the `body` was blank |
+| `ask()` returns `null` | No such note, or no agent is configured for virgil to send to. The question is still marked, and you can answer it yourself |
+| `questions()` comes back empty | Nothing is waiting on an answer |
 | Socket connection fails | That instance is dead. Find one again via §1 |
 | Outside a repo | virgil only works inside a git repository |
 
 **No failure ever silently deletes a note.** When a position can't be found, it is marked
 `stale`/`orphan` and shown to the human.
 
-## 13. Checklist
+## 14. Checklist
 
 Before leaving a note:
 
@@ -274,3 +323,5 @@ Before leaving a note:
 5. `author` carries my name
 6. The returned `anchor.text` is the line I meant
 7. What I am saying is about the code — if it is about someone else's note, it is a `reply`
+8. `questions()` showed me nothing open on this code — an open question there is answered,
+   not answered *beside* with a second box

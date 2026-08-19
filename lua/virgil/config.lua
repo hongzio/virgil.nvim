@@ -17,6 +17,7 @@ M.defaults = {
     border = 'single',
     prefix = '▏', -- the bar, used by border = 'bar'
     icon = '●',
+    question_icon = '?', -- replaces `icon` while the note is waiting on an answer
     max_width = 100, -- hard cap for wrapped note text
     show_author = true,
     show_rationale = true,
@@ -42,6 +43,30 @@ M.defaults = {
     --- `:Virgil sidebar` toggles it, and the toggle outlives one changeset.
     sidebar = false,
     sidebar_width = 40,
+  },
+
+  --- Asking an agent a question left on a line of code.
+  ---
+  --- With no `agent` the question mark is still written and still readable
+  --- through `virgil.questions()` — an agent already on the socket can answer
+  --- it. All that is switched off is virgil spawning one itself.
+  question = {
+    --- 'claude' | 'codex' | 'plain' | an adapter table (see lua/virgil/agents/).
+    --- 'plain' needs a `command` and has no session: every question starts over.
+    agent = nil,
+    --- replaces the adapter's own command, e.g. to pin a path or a model
+    command = nil, -- string[]
+    --- extra arguments the adapter drops into its own argv. They must be flags
+    --- the tool accepts in *both* its start and its resume form — codex's
+    --- `exec` takes `-s`/`-C` and its `exec resume` does not, and a resume that
+    --- fails costs the thread its session. Per-tool config files are safer.
+    args = {},
+    --- who the answer is stamped as; nil -> the adapter's name
+    author = nil,
+    timeout = 180000, -- ms, after which the agent is killed
+    context_lines = 20, -- code quoted around the anchor in the prompt
+    --- dispatch as soon as a question is marked. false leaves it to `:Virgil ask`
+    auto = true,
   },
 
   socket = {

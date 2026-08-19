@@ -162,7 +162,8 @@ local strw = vim.fn.strdisplaywidth
 ---@return table body `{ {text, hl}, … }`
 ---@return table title `{icon, hl}`
 ---@return table meta `{ {text, hl}, … }`
-local function material(note, pos, cfg, width)
+local function material(note, pos, cfg, width, open)
+  open = open or {}
   local badges = {}
   if pos.status == 'stale' then
     table.insert(badges, 'stale')
@@ -195,6 +196,12 @@ local function material(note, pos, cfg, width)
   end
 
   local title = { cfg.icon, STATUS_HL[pos.status] or STATUS_HL[note.status] or 'VirgilIcon' }
+  -- a note still waiting on an answer says so where the eye already goes. Once
+  -- it is answered the mark comes off: a box that stays different for ever is
+  -- noise, and the question has been served
+  if open[note.id] then
+    title = { cfg.question_icon, 'VirgilQuestion' }
+  end
   return body, title, meta
 end
 
@@ -214,31 +221,72 @@ end
 --- own, so it is drawn inside the note's box rather than beside it. Each one
 --- opens with a divider carrying its author, and the box says who answered
 --- without a line spent on saying it.
+--- What an agent asking right now, or one that failed, has to say for itself.
+---
+--- Ordinary body rows, so the frame measures them like everything else. There
+--- is no spinner: animating this would mean a timer redrawing every visible
+--- buffer, and a row that simply disappears says the same thing.
+---@param job table|nil
+---@param width integer
+---@return table[] rows
+local function job_rows(job, width)
+  if not job then
+    return {}
+  end
+  if job.state == 'failed' then
+    local rows = {}
+    for _, line in ipairs(util.wrap('⚠ ask failed: ' .. (job.err or 'unknown'), width)) do
+      table.insert(rows, { line, 'VirgilOrphan' })
+    end
+    return rows
+  end
+  return { { ('⋯ asking %s…'):format(job.agent and job.agent.name or 'agent'), 'VirgilPending' } }
+end
+
+--- The thread under a note, as rows to be appended to its body.
+---
+--- A reply is not a note: it has no anchor, no status and no changeset of its
+--- own, so it is drawn inside the note's box rather than beside it. Each one
+--- opens with a divider carrying its author, and the box says who answered
+--- without a line spent on saying it.
+---
+--- A reply that asks rather than answers carries the question mark in that
+--- divider. The answer to it gets no mark of its own: it sits directly under
+--- the question, which is the whole of what a thread means.
 ---@param note table
 ---@param cfg table
 ---@param width integer cells available for wrapped text
+---@param open table<string, boolean> unanswered question ids
+---@param jobs table<string, table> question id -> job in flight
 ---@return table[] rows `{ {text, hl, divider = true|nil}, … }`
-local function reply_rows(note, cfg, width)
+local function thread_rows(note, cfg, width, open, jobs)
   local rows = {}
+  -- the note's own question is asked before the first reply exists, so this row
+  -- cannot live inside the loop below. It is also drawn when replies are hidden:
+  -- `show_replies` is about the thread, and this is about the note
+  vim.list_extend(rows, job_rows(jobs[note.id], width))
   if not cfg.show_replies then
     return rows
   end
   for _, reply in ipairs(note.replies or {}) do
+    local asking = open[reply.id] or false
     local who = cfg.show_author and reply.author or ''
+    local label = asking and vim.trim('? ' .. who) or who
     -- a name too long to ride in the divider drops below it as ordinary text,
     -- the same trade the summary makes with the top border. What must not be
-    -- overrun is the frame; below it the name wraps like everything else
-    if strw(who) > width - 1 then
+    -- overrun is the frame, so it is the decorated label that gets measured
+    if strw(label) > width - 1 then
       table.insert(rows, { '', 'VirgilAuthor', divider = true })
-      for _, line in ipairs(util.wrap(who, width)) do
-        table.insert(rows, { line, 'VirgilAuthor' })
+      for _, line in ipairs(util.wrap(label, width)) do
+        table.insert(rows, { line, asking and 'VirgilQuestion' or 'VirgilAuthor' })
       end
     else
-      table.insert(rows, { who, 'VirgilAuthor', divider = true })
+      table.insert(rows, { label, asking and 'VirgilQuestion' or 'VirgilAuthor', divider = true })
     end
     for _, line in ipairs(util.wrap(reply.body, width)) do
       table.insert(rows, { line, 'VirgilReply' })
     end
+    vim.list_extend(rows, job_rows(jobs[reply.id], width))
   end
   return rows
 end
@@ -262,7 +310,7 @@ local function framed_block(note, pos, opts, chars, tees)
   local inner = avail - 4 -- "│ " … " │"
 
   local summary = note.summary ~= '' and note.summary or '(no summary)'
-  local body, title, meta = material(note, pos, cfg, inner)
+  local body, title, meta = material(note, pos, cfg, inner, opts.open)
   local meta_text = joined(meta)
 
   -- assemble the two ends of the top border, then let the dashes take the slack
@@ -314,7 +362,7 @@ local function framed_block(note, pos, opts, chars, tees)
   end
   -- last, and in the order they were written: everything above is what the note
   -- itself says
-  vim.list_extend(body, reply_rows(note, cfg, inner))
+  vim.list_extend(body, thread_rows(note, cfg, inner, opts.open, opts.jobs))
 
   local width = chunks_width(left) + 1 + chunks_width(right)
   for _, line in ipairs(body) do
@@ -391,7 +439,7 @@ local function bar_block(note, pos, opts)
     table.insert(out, { bar, { '  ' .. line[1], hl(line[2]) } })
   end
   -- no frame to hang a divider on, so the thread is marked by an arrow instead
-  for _, line in ipairs(reply_rows(note, cfg, width - 2)) do
+  for _, line in ipairs(thread_rows(note, cfg, width - 2, opts.open, opts.jobs)) do
     if line.divider then
       table.insert(out, { bar, { '  ↳ ' .. (line[1] ~= '' and line[1] or 'reply'), hl('VirgilAuthor') } })
     else
@@ -406,6 +454,22 @@ end
 ---@param opts table
 ---@return table[] virt_lines
 local function block(note, pos, opts)
+  -- worked out once here rather than in each of the two drawing routines: both
+  -- the icon and the rows below it turn on the same two facts
+  local question = require('virgil.question')
+  opts.open, opts.jobs = {}, {}
+  for _, q in ipairs(question.thread(note)) do
+    if not q.answer then
+      opts.open[q.id] = true
+      -- a job on an answered question has nothing left to say: somebody wrote
+      -- the answer by hand while it was running, or after it failed
+      local job = opts.repo and question.jobs[question.key(opts.repo, q.id)] or nil
+      if job then
+        opts.jobs[q.id] = job
+      end
+    end
+  end
+
   local chars, tees = border_chars(config.options.render.border)
   if chars then
     return framed_block(note, pos, opts, chars, tees)
@@ -453,7 +517,7 @@ function M.render(buf)
       if cfg.align_indent then
         indent = math.min(indent_width((lines[line] or ''):match('^%s*') or '', vim.bo[buf].tabstop), 40)
       end
-      local virt = block(item.note, item.pos, { dim = dim, indent = indent, width = width })
+      local virt = block(item.note, item.pos, { dim = dim, indent = indent, width = width, repo = view.repo })
       vim.api.nvim_buf_set_extmark(buf, util.NS, line - 1, 0, {
         virt_lines = virt,
         virt_lines_above = true,

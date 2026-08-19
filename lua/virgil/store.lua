@@ -40,6 +40,14 @@ local function decode(content)
   return data
 end
 
+--- A field that is only ever a non-empty string, or absent. Anything else on
+--- disk — a hand-edited `notes.json` saying `"question": "yes"` — is nothing.
+---@param v any
+---@return string|nil
+local function str_or_nil(v)
+  return type(v) == 'string' and v ~= '' and v or nil
+end
+
 --- A reply carries no anchor of its own: it points at the note, and the note
 --- points at the code. Anything without words to say is not a reply.
 ---@param reply any
@@ -57,6 +65,12 @@ local function normalize_reply(reply)
   end
   reply.author = reply.author or ''
   reply.created_at = reply.created_at or util.now()
+  -- a reply that asks rather than answers, and the link back to what it answers
+  reply.question = reply.question == true or nil
+  reply.answers = str_or_nil(reply.answers)
+  -- which agent session produced this answer, so a follow-up can carry on in it
+  reply.session = str_or_nil(reply.session)
+  reply.agent = str_or_nil(reply.agent)
   return reply
 end
 
@@ -96,6 +110,7 @@ local function normalize(note)
   note.status = note.status or 'open'
   note.author = note.author or ''
   note.created_at = note.created_at or util.now()
+  note.question = note.question == true or nil
   if type(note.context) ~= 'table' then
     note.context = nil
   end
@@ -336,7 +351,7 @@ end
 --- field to decide what has gone cold.
 ---@param repo table
 ---@param note_id string
----@param fields table `{ body, author, created_at }`
+---@param fields table `{ body, author, created_at, question, answers, session, agent }`
 ---@return table|nil reply
 function M.add_reply(repo, note_id, fields)
   local state = M.state(repo)
@@ -354,6 +369,10 @@ function M.add_reply(repo, note_id, fields)
     author = fields.author or '',
     body = fields.body or '',
     created_at = fields.created_at,
+    question = fields.question,
+    answers = fields.answers,
+    session = fields.session,
+    agent = fields.agent,
   })
   if not reply then
     return nil

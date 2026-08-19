@@ -63,6 +63,23 @@ function M.uid(prefix)
   return ('%s-%x%04x%x'):format(prefix or 'n', os.time() % 0xffffff, math.random(0, 0xffff), counter % 0xf)
 end
 
+--- A version 4 UUID, for tools that want a session named in their own format.
+---
+--- `uid` is virgil's own short id and is not one of these; a CLI handed
+--- `n-77501c5ff51` where it expects a uuid refuses it.
+---@return string
+function M.uuid()
+  if not seeded then
+    math.randomseed(os.time() + vim.uv.os_getpid())
+    seeded = true
+  end
+  local out = ('xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'):gsub('[xy]', function(c)
+    local v = c == 'x' and math.random(0, 0xf) or math.random(8, 0xb)
+    return ('%x'):format(v)
+  end)
+  return out
+end
+
 --- Exact bytes the buffer would be written as, so `git hash-object` agrees with git.
 ---@param buf integer
 ---@return string

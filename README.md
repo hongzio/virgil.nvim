@@ -117,6 +117,8 @@ there.
 :Virgil remove           " delete the note near the cursor (irreversible)
 :Virgil reply            " answer the note near the cursor
 :Virgil unreply          " delete one of a note's replies (irreversible)
+:Virgil ask              " ask an agent about the note near the cursor
+:Virgil questions        " list questions waiting on an answer
 :Virgil review [base] [head]   " open a changeset as diff tabs; with no arguments, pick one
 :Virgil files            " changed-file picker
 :Virgil sidebar          " toggle the changeset's changed-file list
@@ -128,7 +130,7 @@ there.
 ```
 
 In the compose window the first non-empty line is the summary and everything below it is
-the rationale. `<C-s>` saves, `q` cancels.
+the rationale. `<C-s>` saves, `<C-q>` saves it as a question, `q` cancels.
 
 `<Plug>(virgil-edit)` reopens that window on the note at the cursor, filled in with what it
 says now. Only the words change — where the note points, its status and the changeset it
@@ -176,6 +178,108 @@ front of you wins a conflict — two instances rewording one note leaves no way 
 which wording came later — but replies are only ever appended, so both sides are kept and
 put back in the order they were written.
 
+### Questions
+
+A note or a reply can be a question, and an agent answers it in the same box:
+
+```
+┌─ ? why is this mutex held across the retry? ────── hongzio ─┐
+│ the whole loop runs under it, including the sleep           │
+├─ claude ───────────────────────────────────────────────────┤
+│ it guards `b.seq`, which reap() reads at mint.go:88. The    │
+│ sleep is inside it only because the counter is read again   │
+│ on the way out — mint.go:104.                               │
+├─ ? hongzio ────────────────────────────────────────────────┤
+│ then why not an RWMutex?                                    │
+│ ⋯ asking claude…                                            │
+└────────────────────────────────────────────────────────────┘
+```
+
+`<C-q>` in the composer writes the note or reply *and* asks. `:Virgil ask` asks about a
+note that already exists — with a single question already waiting it simply sends it
+again, which is how a failed ask is retried.
+
+**A question is answered when a reply says which question it answers**, and by nothing
+else. Being followed does not count and being recent does not count:
+
+```lua
+virgil.reply('n-abc', { body = 'it guards b.seq', answers = 'r-def', author = 'agent' })
+```
+
+That link lives on the *answer*, never as a flag on the question, and it has to: notes
+merge last-writer-wins while replies merge by appending, so a flag written by the instance
+that answers would be thrown away by the instance that asked. `virgil.questions()` lists
+what is still open, which is what an agent already on the socket reads to find work.
+
+**Reword a question and it stops being the question that was answered.** The run still in
+flight is stopped — it was handed the old wording — and the answer already there loses the
+link that made it *the* answer, so the question reopens and (with `question.auto`) goes out
+again. Nothing is destroyed: the old answer stays in the thread as ordinary words, and the
+new one lands under it, so the box reads in order instead of showing a hole. `unreply` is
+still the only thing in virgil that takes words away.
+
+Only the question's own words count for this. The rationale, the status and where the note
+points can all change without disturbing the thread. Deleting an answer reopens its
+question too, and needs no special handling — the link lives on the answer, so it goes when
+the answer does.
+
+The mark is worth something with no agent configured at all — it is durable, it exports,
+and anything on the socket can answer it. All `question.agent` decides is whether virgil
+also spawns something itself.
+
+### Agents
+
+`question.agent` names how to run one. The agent is started with the **repository root**
+as its working directory, not the file's folder: a question about one line is almost
+always a question about the project, and an agent that cannot see the repository is
+answering from a snippet.
+
+| `agent` | runs | carries a conversation on |
+|---|---|---|
+| `'claude'` | `claude -p --session-id <uuid>` | `claude -p --resume <uuid>` |
+| `'codex'` | `codex exec --json -o <file>` | `codex exec resume --json -o <file> <id> -` |
+| `'plain'` | whatever `question.command` says | no — every question starts over |
+
+A thread is one session, so a follow-up is answered in the light of the last answer
+instead of re-reading the repository from nothing. The session id is recorded on the reply
+that produced it, alongside which adapter made it — change tools and the old id is not
+offered. A session that has since been swept away fails exactly the way a real error does,
+so virgil does not try to tell them apart: it starts a fresh one, once.
+
+Adding a tool is one table. The adapter builds the whole command line rather than having
+flags appended to a shared one, because `codex` resumes with a subcommand in the *middle*
+of the line, and because the session id is virgil's to plant for one tool and the agent's
+to report for the other:
+
+```lua
+question = {
+  agent = {
+    name = 'mytool',
+    command = { 'mytool', 'run' },
+    sessions = true,          -- can it carry a conversation on at all
+    seeds_session = false,    -- true: virgil mints the id and passes it in
+    wants_scratch = false,    -- true: virgil provides ctx.scratch, a temp file
+    argv = function(ctx) end, -- the whole command line
+    stdin = function(ctx) end, -- what to write to the process
+    answer = function(res, ctx) end, -- body, err
+    session = function(res, ctx) end, -- id to carry forward
+  },
+}
+```
+
+Anything left out is filled in from `plain`, so an adapter only has to say what it does
+differently. Only `claude`, `codex` and `plain` ship: the rest were not on hand to test
+against, and an adapter whose flags were guessed at fails in a way that reads as virgil's
+fault rather than the tool's.
+
+`question.command` replaces an adapter's own command — to pin a path, or a model.
+`question.args` are dropped into the adapter's argv. Both have a trap worth knowing:
+`codex exec` and `codex exec resume` do **not** accept the same options (`-s`, `-C` and
+`--add-dir` are `exec` only), so anything there has to be accepted by both forms.
+Otherwise resuming fails, the fresh-start fallback quietly covers for it, and the thread
+silently stops carrying its conversation. Sandbox and model belong in
+`~/.codex/config.toml`, which both forms read.
+
 In the `:Virgil notes` list (when using fzf-lua):
 
 | Key | Action |
@@ -206,6 +310,7 @@ map({ 'n', 'x' }, '<leader>vv', '<Plug>(virgil-note)',    { desc = 'Virgil note'
 map('n', '<leader>ve', '<Plug>(virgil-edit)',             { desc = 'Virgil edit note at cursor' })
 map('n', '<leader>vx', '<Plug>(virgil-remove)',           { desc = 'Virgil delete note at cursor' })
 map('n', '<leader>vc', '<Plug>(virgil-reply)',            { desc = 'Virgil reply to note at cursor' })
+map('n', '<leader>va', '<Plug>(virgil-ask)',              { desc = 'Virgil ask about note at cursor' })
 map('n', '<leader>vt', '<Plug>(virgil-toggle)',           { desc = 'Virgil toggle visibility' })
 map('n', '<leader>vl', '<Cmd>Virgil notes<CR>',           { desc = 'Virgil list notes' })
 
@@ -368,11 +473,20 @@ local virgil = require('virgil')
 
 virgil.status()                    -- current view's content address, path, cursor, visible note count
 virgil.note({ path, line, end_line, summary, rationale, author })
-virgil.notes({ path, status, changeset, id })  -- stored anchor + projection into the current view
+virgil.notes({ path, status, changeset, id, question })  -- stored anchor + projection into the current view
 virgil.update(id, { summary = '…' })
-virgil.reply(id, { body = '…', author = '…' })  -- answer a note; the reply hangs under it
+virgil.reply(id, { body = '…', author = '…', question = false, answers = nil })
+                                   -- answer a note; the reply hangs under it.
+                                   -- `answers` names the question it answers;
+                                   -- `question` makes it a question of its own.
                                    -- Omit the body for the composer, the id for the
                                    -- note under the cursor
+virgil.ask(id, { body = '…' })     -- ask about a note and send it to question.agent.
+                                   -- With no body it re-sends the one question already
+                                   -- waiting, which is how a failed ask is retried
+virgil.questions({ note_id, path, changeset, state })
+                                   -- questions and their answers. `state` is
+                                   -- 'unanswered' (default) | 'answered' | 'pending' | 'all'
 virgil.update_reply(note_id, reply_id, { body = '…' })  -- reword a reply
 virgil.unreply(note_id, reply_id)  -- delete one. Omit either id to be asked which
 virgil.edit(id)                    -- the same rewrite, through the compose window
@@ -405,6 +519,10 @@ not-yet-committed content again.
 A note's replies live inside it, in a `replies` list. There is nothing else to keep for
 them — no anchor, no address — just who said what, and when.
 
+The question mark, the `answers` link and the agent session an answer came out of are all
+stored there too. What is *not* stored is which questions are being asked right now: that
+lives in memory and dies with the editor, so a crash never leaves a note asking for ever.
+
 Notes are personal by default. Handing them to the team takes an explicit `:Virgil export`.
 A permanent fact the team should share belongs in a code comment or the docs — a note's
 place is *an observation that is true for me right now*, a suspicion not yet confirmed, or
@@ -429,6 +547,17 @@ require('virgil').setup({
     show_rationale = true,
     show_replies = true, -- draw a note's replies under it, in the same box
     align_indent = true, -- align the note block to the code's indentation
+    question_icon = '?', -- replaces `icon` while the note is waiting on an answer
+  },
+  question = {
+    agent = nil,         -- 'claude' | 'codex' | 'plain' | an adapter table
+                         -- nil: questions are still marked, just not sent
+    command = nil,       -- replaces the adapter's own command
+    args = {},           -- extra arguments the adapter drops into its argv
+    author = nil,        -- who the answer is stamped as (default: the adapter's name)
+    timeout = 180000,    -- ms, after which the agent is killed
+    context_lines = 20,  -- code quoted around the anchor in the prompt
+    auto = true,         -- send as soon as a question is marked
   },
   changeset = {
     layout = 'vertical', -- 'vertical' | 'horizontal'
@@ -443,7 +572,8 @@ require('virgil').setup({
 
 Highlight groups (all `default` links, so a colorscheme wins):
 `VirgilBorder` `VirgilSign` `VirgilIcon` `VirgilSummary` `VirgilRationale`
-`VirgilReply` `VirgilAuthor` `VirgilStale` `VirgilOrphan` `VirgilResolved` `VirgilDim`.
+`VirgilReply` `VirgilAuthor` `VirgilQuestion` `VirgilPending` `VirgilStale` `VirgilOrphan`
+`VirgilResolved` `VirgilDim`.
 
 ## When a note drifts
 
@@ -469,6 +599,12 @@ the drift itself is the signal that the code changed underneath it.
 | Filetype of the left-hand blob | `filetype` is left unset and only treesitter (or `syntax` if unavailable) is enabled. You get highlighting without a language server attaching to a buffer that has no file. Change it with `changeset.highlight = 'filetype'` |
 | Socket lifetime | The first instance takes the canonical path; later ones fall back to `<path>.<pid>`. Socket files from dead instances are cleaned up automatically |
 | Replying to a note | The reply is stored inside the note, not as a note carrying a parent id. An anchor is what makes something a note, and a reply has none — giving it one would let a thread drift apart line by line, and would put the answer on screen as a second box beside the question |
+| Marking a question answered | An explicit `answers` link on the **answering reply**, never a flag on the question. Notes merge last-writer-wins and replies merge by appending, so a flag written by the instance that answers would be discarded by the instance that asked. It also means no clock is involved — `created_at` has second resolution, and a fast agent answers within the same second it was asked |
+| A question that gets reworded | The answer keeps its words and loses its `answers` link, so the question reopens and the new answer lands beneath the old one. Deleting the answer instead would make editing the one thing besides `unreply` that destroys a reply; leaving the link would leave an answer attached to a sentence that no longer exists |
+| Where the agent runs | With the repository root as its working directory, not the file's folder. A question about one line is almost always a question about the project, and an agent that cannot see the repository answers from the snippet alone |
+| What is in flight | In memory only, never written down. A crash must not bring back a note that has been asking since Tuesday, and there is nothing on disk worth resuming |
+| Carrying a conversation on | One note is one agent session, and the session id rides on the answer that produced it — so it merges the way replies do — next to the name of the adapter that made it, so changing tools does not hand a stale id to something that never issued it |
+| Driving more than one agent CLI | The adapter builds the whole command line rather than adding flags to a shared one. `codex` resumes with a subcommand in the middle of the line, which no amount of appending reaches, and the session id is virgil's to plant for `claude` and the agent's to report for `codex`. Only tools that could be tested against ship; a guessed-at adapter fails in a way that reads as virgil's fault |
 | Telling agent notes from human ones | It goes no further than stamping the name (`author`) dimly in the note's header. Colors aren't split because the distinction that matters is not "who wrote it" but "is this about the change in front of me" — and emphasis versus dimming already carries that |
 
 ## Tests

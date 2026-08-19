@@ -7,6 +7,7 @@ local config = require('virgil.config')
 local convert = require('virgil.convert')
 local git = require('virgil.git')
 local project = require('virgil.project')
+local question = require('virgil.question')
 local render = require('virgil.render')
 local changeset = require('virgil.changeset')
 local store = require('virgil.store')
@@ -75,6 +76,48 @@ local function cursor_line(buf)
     end
   end
   return 1
+end
+
+--- Send a freshly marked question to the configured agent.
+---
+--- Marking is worth something on its own — the flag is durable, and an agent
+--- already on the socket can read it out of `questions()` and answer — so a
+--- missing `question.agent` is a notice, not a refusal. Nothing here can undo
+--- the mark that has already been written.
+---@param repo table
+---@param note_id string
+---@param question_id string the note's own id, or a reply's
+---@param marked boolean|nil
+local function ask_if_marked(repo, note_id, question_id, marked)
+  if not marked or not config.options.question.auto then
+    return
+  end
+  local sent, err = question.dispatch(repo, note_id, question_id)
+  if not sent and err then
+    util.notify(('marked as a question — %s'):format(err))
+  end
+end
+
+--- Reword a question and it is not the question that was answered.
+---
+--- Anything else about the note can change without touching the thread — the
+--- rationale, the status, where it points. It is the words of the question
+--- itself that an answer was an answer *to*.
+---@param repo table
+---@param note_id string
+---@param question_id string
+---@param before string|nil the question's words as they were
+---@param after string|nil and as they now read
+---@param marked boolean|nil whether it is still a question at all
+local function reworded(repo, note_id, question_id, before, after, marked)
+  if not marked or (before or '') == (after or '') then
+    return
+  end
+  if question.reopen(repo, note_id, question_id) then
+    util.notify('the question changed; its answer is no longer the answer')
+  end
+  render.refresh()
+  ask_if_marked(repo, note_id, question_id, marked)
 end
 
 --- Note ids to act on: an explicit id, a list of them (pickers select several),
@@ -210,7 +253,7 @@ function M.note(opts)
   local rc = changeset.context_for_buf(view.buf)
   local author = opts.author or config.options.author or vim.env.USER or 'me'
 
-  local function create(summary, rationale)
+  local function create(summary, rationale, question)
     local a = anchor.make(view, line, end_line)
     local context
     if rc then
@@ -246,6 +289,7 @@ function M.note(opts)
       status = 'open',
       created_at = util.now(),
       context = context,
+      question = question == true or nil,
     })
     project.clear_cache()
     render.refresh()
@@ -253,13 +297,16 @@ function M.note(opts)
   end
 
   if opts.summary and opts.summary ~= '' then
-    return create(opts.summary, opts.rationale)
+    local note = create(opts.summary, opts.rationale, opts.question)
+    ask_if_marked(view.repo, note.id, note.id, note.question)
+    return note
   end
 
   local title = ('note · %s:%s'):format(view.path, line == end_line and line or (line .. '-' .. end_line))
-  ui.compose({ title = title }, function(summary, rationale)
-    local note = create(summary, rationale)
+  ui.compose({ title = title }, function(summary, rationale, meta)
+    local note = create(summary, rationale, meta.question)
     util.notify(('note %s saved'):format(note.id))
+    ask_if_marked(view.repo, note.id, note.id, note.question)
   end)
   return nil
 end
@@ -283,6 +330,7 @@ local function edit_note(repo, id)
   }, function(summary, rationale)
     -- read back through the store: the window was open for a while, and the
     -- note may have been removed from another instance meanwhile
+    local was = note.summary
     local updated = store.update(repo, note.id, { summary = summary, rationale = rationale })
     if not updated then
       util.warn(('note %s is gone'):format(note.id))
@@ -290,6 +338,7 @@ local function edit_note(repo, id)
     end
     render.refresh()
     util.notify(('note %s updated'):format(note.id))
+    reworded(repo, note.id, note.id, was, updated.summary, updated.question)
   end)
   return nil
 end
@@ -347,8 +396,11 @@ end
 ---
 --- With a `body` this returns immediately, which is the path agents take;
 --- without one the composer opens, and the whole buffer is the reply.
+--- `question` marks the reply as a follow-up question rather than an answer,
+--- and `answers` names the question this reply answers — without it the
+--- question stays open no matter what comes after it in the thread.
 ---@param id string|nil the note to answer; omit it for the one at the cursor
----@param opts table|nil `{ body, author }`
+---@param opts table|nil `{ body, author, question, answers, session, agent }`
 ---@return table|nil reply
 function M.reply(id, opts)
   opts = opts or {}
@@ -366,15 +418,23 @@ function M.reply(id, opts)
     end
     local author = opts.author or config.options.author or vim.env.USER or 'me'
 
-    local function save(body)
+    local function save(body, question)
       -- read back through the store: the composer was open for a while, and the
       -- note may have been removed from another instance meanwhile
-      local reply = store.add_reply(repo, note_id, { author = author, body = body })
+      local reply = store.add_reply(repo, note_id, {
+        author = author,
+        body = body,
+        question = question == true or nil,
+        answers = opts.answers,
+        session = opts.session,
+        agent = opts.agent,
+      })
       if not reply then
         util.warn(('note %s is gone'):format(note_id))
         return nil
       end
       render.refresh()
+      ask_if_marked(repo, note_id, reply.id, reply.question)
       return reply
     end
 
@@ -382,18 +442,107 @@ function M.reply(id, opts)
     -- than writing a reply nobody can read
     local body = opts.body and vim.trim(tostring(opts.body)) or nil
     if body and body ~= '' then
-      written = save(body)
+      written = save(body, opts.question)
       return
     end
     local subject = note.summary ~= '' and note.summary or note_id
-    ui.compose({ title = ('reply · %s'):format(vim.trim(util.fit(subject, 48))), plain = true }, function(body)
-      local reply = save(body)
+    local title = ('reply · %s'):format(vim.trim(util.fit(subject, 48)))
+    ui.compose({ title = title, plain = true }, function(body, meta)
+      local reply = save(body, meta.question)
       if reply then
         util.notify(('replied to %s'):format(note_id))
       end
     end)
   end)
   return written
+end
+
+--- Ask a question about a note, and let the configured agent answer it.
+---
+--- With a `body` this writes the question and sends it, which is the path an
+--- agent takes. Without one it looks at what is already waiting: a single
+--- unanswered question is simply sent again — that is how a failed ask is
+--- retried — several put a chooser up, and none opens the composer.
+---
+--- Like `reply` and `remove`, this returns nil while a chooser is up: nothing
+--- has been asked yet by the time it returns.
+---@param id string|nil the note to ask about; omit it for the one at the cursor
+---@param opts table|nil `{ body, author }`
+---@return table|nil `{ note_id, question_id, dispatched }`
+function M.ask(id, opts)
+  opts = opts or {}
+  local out = nil
+  resolve_ids(id, 'ask about which note?', function(list, repo)
+    if #list == 0 then
+      return
+    end
+    local note_id = list[1]
+    local note = store.get(repo, note_id)
+    if not note then
+      util.warn('no note ' .. tostring(note_id))
+      return
+    end
+
+    local function send(question_id)
+      out = { note_id = note_id, question_id = question_id }
+      local sent, err = question.dispatch(repo, note_id, question_id)
+      out.dispatched = sent
+      if not sent and err then
+        util.warn(err)
+      end
+      return sent
+    end
+
+    --- Write the question down first: the mark is what outlives this editor,
+    --- and it is worth having even when there is no agent to send it to.
+    local function write(body)
+      local reply = store.add_reply(repo, note_id, {
+        author = opts.author or config.options.author or vim.env.USER or 'me',
+        body = body,
+        question = true,
+      })
+      if not reply then
+        util.warn(('note %s is gone'):format(note_id))
+        return
+      end
+      render.refresh()
+      send(reply.id)
+    end
+
+    local body = opts.body and vim.trim(tostring(opts.body)) or nil
+    if body and body ~= '' then
+      write(body)
+      return
+    end
+
+    local open = {}
+    for _, q in ipairs(question.thread(note)) do
+      if not q.answer then
+        table.insert(open, q)
+      end
+    end
+    if #open == 1 then
+      send(open[1].id)
+      return
+    end
+    if #open > 1 then
+      ui.select(open, {
+        prompt = 'ask which question?',
+        format_item = function(q)
+          return vim.trim(util.fit(vim.split(q.text or '', '\n', { plain = true })[1] or '', 60))
+        end,
+      }, function(choice)
+        if choice then
+          send(choice.id)
+        end
+      end)
+      return
+    end
+
+    local subject = note.summary ~= '' and note.summary or note_id
+    ui.compose({ title = ('ask · %s'):format(vim.trim(util.fit(subject, 48))), plain = true }, write)
+  end)
+  return out
 end
 
 --- Rewrite a reply, prefilled with what it says now. Both ids may be omitted:
@@ -411,6 +560,7 @@ function M.update_reply(note_id, reply_id, fields)
     end
     local nid = list[1]
     resolve_reply(repo, nid, reply_id, 'edit which reply?', function(reply)
+      local was = reply.body
       local body = fields.body and vim.trim(tostring(fields.body)) or nil
       if body and body ~= '' then
         written = store.update_reply(repo, nid, reply.id, { body = body })
@@ -419,16 +569,19 @@ function M.update_reply(note_id, reply_id, fields)
           return
         end
         render.refresh()
+        reworded(repo, nid, reply.id, was, written.body, written.question)
         return
       end
       local who = reply.author ~= '' and reply.author or reply.id
       ui.compose({ title = ('edit reply · %s'):format(who), plain = true, body = reply.body }, function(body)
-        if not store.update_reply(repo, nid, reply.id, { body = body }) then
+        local updated = store.update_reply(repo, nid, reply.id, { body = body })
+        if not updated then
           util.warn(('reply %s is gone'):format(reply.id))
           return
         end
         render.refresh()
         util.notify(('reply %s updated'):format(reply.id))
+        reworded(repo, nid, reply.id, was, updated.body, updated.question)
       end)
     end)
   end)
@@ -484,12 +637,14 @@ function M.update(id, fields)
   if not repo then
     return nil
   end
+  local was = (store.get(repo, id) or {}).summary
   local note = store.update(repo, id, fields or {})
   if not note then
     util.warn('no note ' .. tostring(id))
     return nil
   end
   render.refresh()
+  reworded(repo, id, id, was, note.summary, note.question)
   return note
 end
 
@@ -519,6 +674,9 @@ function M.notes(filter)
     if filter.status and note.status ~= filter.status then
       ok = false
     end
+    if filter.question ~= nil and (note.question == true) ~= (filter.question == true) then
+      ok = false
+    end
     if want and not changeset.same_changeset(note.context, want) then
       ok = false
     end
@@ -546,6 +704,28 @@ function M.notes(filter)
     return (a.anchor.path or '') < (b.anchor.path or '')
   end)
   return out
+end
+
+--- Questions waiting on the code, one row each.
+---
+--- An unanswered question is a person waiting for an answer, which is why that
+--- is the default state. `pending` means an agent is already working on it —
+--- answering it a second time only makes the thread longer.
+---
+--- Answering is an ordinary reply that names what it answers:
+--- `reply(note_id, { body = …, answers = question_id, author = 'agent' })`.
+--- Without `answers` the question stays open however the thread grows.
+---@param filter table|nil `{ note_id, path, changeset, state }`,
+---  `state` being 'unanswered' (default) | 'answered' | 'pending' | 'all'
+---@return table[]
+function M.questions(filter)
+  filter = filter or {}
+  local repo = current_repo()
+  if not repo then
+    return {}
+  end
+  local notes = M.notes({ path = filter.path, changeset = filter.changeset, id = filter.note_id })
+  return question.list(repo, notes, { note_id = filter.note_id, state = filter.state })
 end
 
 --- Move the screen to a file (optionally at a revision) and place the cursor.
@@ -604,6 +784,8 @@ function M.remove(ids)
     local only = #list == 1 and store.get(repo, list[1]) or nil
     local label = only and only.summary ~= '' and only.summary or list[1]
     local n = store.remove(repo, list)
+    -- nothing left to answer; the agents still asking are working for nobody
+    question.cancel_for(repo, list)
     render.refresh()
     if n > 0 then
       util.notify(n == 1 and ('removed: %s'):format(label) or ('%d notes removed'):format(n))
@@ -797,6 +979,7 @@ function M.prune(opts)
   report.ids = doomed
   if not opts.dry_run and #doomed > 0 then
     report.removed = store.remove(repo, doomed)
+    question.cancel_for(repo, doomed)
     render.refresh()
   end
   return report
