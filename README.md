@@ -133,6 +133,12 @@ says now. Only the words change — where the note points, its status and the ch
 came from stay as they were. Emptying the window cancels the edit rather than deleting the
 note: `:Virgil remove` is still the only thing that destroys one.
 
+Both of those act on the note at the cursor, and the cursor does not always name one note.
+Two notes can sit on the same line, and the cursor can sit exactly between one above and
+one below. Rather than guess, virgil puts the candidates up in the configured picker and
+asks which one — an irreversible delete is no place for a coin toss. Aborting that list
+leaves every note where it was.
+
 In the `:Virgil notes` list (when using fzf-lua):
 
 | Key | Action |

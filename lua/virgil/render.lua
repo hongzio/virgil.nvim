@@ -438,17 +438,24 @@ function M.notes_in(buf)
   return M.placed[buf] or {}
 end
 
---- The note nearest to `line` in `buf`. Deliberately forgiving: a note hangs
+--- The notes nearest to `line` in `buf`. Deliberately forgiving: a note hangs
 --- *above* its line, so the cursor is rarely exactly on it.
+---
+--- All of them, not one: several notes can sit on the same line, and the cursor
+--- can sit exactly between two of them. Picking one of those for the user is a
+--- guess, and on `remove` it is a guess that destroys the other note's twin.
+--- The caller asks which one instead.
 ---@param buf integer
 ---@param line integer
----@return table|nil
-function M.note_at(buf, line)
-  local best, dist
+---@return table[] in line order, empty when the buffer draws no notes
+function M.notes_at(buf, line)
+  local best, dist = {}, nil
   for _, p in ipairs(M.notes_in(buf)) do
     local d = math.abs(p.line - line)
     if not dist or d < dist then
-      best, dist = p, d
+      best, dist = { p }, d
+    elseif d == dist then
+      table.insert(best, p)
     end
   end
   return best

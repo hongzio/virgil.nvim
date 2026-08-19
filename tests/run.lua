@@ -369,12 +369,61 @@ do
   -- with no id at all it takes the note the cursor is on, which is what the
   -- keymap does
   local buf = edit(vim.fs.joinpath(dir, 'a.txt'))
-  -- line 8 has no other note: two on one line is legal, and the nearest wins
+  -- line 8 has no other note, so nothing is asked
   local here = virgil.note({ path = 'a.txt', line = 8, summary = 'under the cursor' })
   render.render(buf)
   vim.api.nvim_win_set_cursor(0, { 8, 0 })
   eq('no id means the note at the cursor', virgil.remove(), true)
   check('which is the one that goes', store.get(repo, here.id) == nil)
+end
+
+section('several notes under the cursor')
+do
+  local repo = git.repo(dir)
+  -- two notes on one line is legal, and deleting one of them by nearness would
+  -- be a coin toss over something that cannot be undone
+  local first = virgil.note({ path = 'a.txt', line = 9, summary = 'first here' })
+  local second = virgil.note({ path = 'a.txt', line = 9, summary = 'second here' })
+  local before = #store.all(repo)
+  local buf = edit(vim.fs.joinpath(dir, 'a.txt'))
+  render.render(buf)
+  vim.api.nvim_win_set_cursor(0, { 9, 0 })
+
+  local asked, real = nil, vim.ui.select
+  local answer = nil
+  vim.ui.select = function(items, opts, on_choice)
+    asked = { prompt = opts and opts.prompt, rows = vim.tbl_map(opts.format_item, items) }
+    on_choice(answer and items[answer] or nil, answer)
+  end
+
+  answer = nil -- the picker was aborted
+  eq('an abort removes nothing', virgil.remove(), false)
+  eq('but it did ask', asked and #asked.rows, 2)
+  check('naming what the answer decides', (asked.prompt or ''):find('delete') ~= nil, asked.prompt)
+  check('with the summaries to tell them apart', asked.rows[2]:find('second here', 1, true) ~= nil, asked.rows[2])
+  eq('and both notes are still there', #store.all(repo), before)
+
+  answer = 2
+  virgil.remove()
+  check('the chosen note goes', store.get(repo, second.id) == nil)
+  check('and only that one', store.get(repo, first.id) ~= nil)
+
+  -- edit has the same tie to break, and picking wrong there opens the wrong
+  -- note's words for rewriting
+  local third = virgil.note({ path = 'a.txt', line = 9, summary = 'third here' })
+  render.render(buf)
+  answer = 2
+  virgil.edit()
+  eq(
+    'edit asks too, and prefills what was chosen',
+    vim.api.nvim_buf_get_lines(vim.api.nvim_get_current_buf(), 0, -1, false)[1],
+    'third here'
+  )
+  vim.cmd('write')
+
+  vim.ui.select = real
+  store.remove(repo, { first.id, third.id })
+  render.refresh()
 end
 
 section('visibility')

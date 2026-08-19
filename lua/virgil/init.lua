@@ -79,27 +79,61 @@ end
 
 --- Note ids to act on: an explicit id, a list of them (pickers select several),
 --- or — given nothing — the note at the cursor.
+---
+--- `act` runs at once for everything but the last case, and there too whenever
+--- the cursor names a single note. Only a genuine tie — several notes on one
+--- line, or one above and one below — puts a picker up first, and then `act`
+--- runs from the picker, after this function has already returned. Callers that
+--- report what they did have to cope with that; nothing has happened yet by the
+--- time they return.
 ---@param ids string|string[]|nil
----@return string[] ids, table|nil repo
-local function resolve_ids(ids)
+---@param prompt string what the chooser is for, when one is needed
+---@param act fun(ids: string[], repo: table)
+local function resolve_ids(ids, prompt, act)
   local repo = current_repo()
   if not repo then
     util.err('not inside a git repository')
-    return {}, nil
+    return
   end
   if type(ids) == 'string' and ids ~= '' then
-    return { ids }, repo
+    return act({ ids }, repo)
   end
   if type(ids) == 'table' then
-    return ids, repo
+    return act(ids, repo)
   end
   local buf = vim.api.nvim_get_current_buf()
-  local hit = render.note_at(buf, vim.api.nvim_win_get_cursor(0)[1])
-  if not hit then
+  local hits = render.notes_at(buf, vim.api.nvim_win_get_cursor(0)[1])
+  if #hits == 0 then
     util.warn('no note here')
-    return {}, repo
+    return
   end
-  return { hit.id }, repo
+  if #hits == 1 then
+    return act({ hits[1].id }, repo)
+  end
+
+  local items = {}
+  for _, hit in ipairs(hits) do
+    local note = store.get(repo, hit.id)
+    table.insert(items, {
+      id = hit.id,
+      line = hit.line,
+      -- the store is what the note actually says; `hit` only knows where it was
+      -- drawn. A note removed from another instance leaves its id to show
+      summary = note and note.summary or hit.id,
+      state = hit.status ~= 'ok' and hit.status or (note and note.status ~= 'open' and note.status or nil),
+    })
+  end
+  ui.select(items, {
+    prompt = prompt,
+    format_item = function(it)
+      return ('%d  %s%s'):format(it.line, util.fit(it.summary, 60), it.state and (' (' .. it.state .. ')') or '')
+    end,
+  }, function(choice)
+    if not choice then
+      return
+    end
+    act({ choice.id }, repo)
+  end)
 end
 
 --------------------------------------------------------------------------- api
@@ -230,21 +264,13 @@ function M.note(opts)
   return nil
 end
 
---- Rewrite a note's text in the composer, prefilled with what it says now.
---- Only the words change: the anchor, the status and the context stay as they
---- were, so an edit never moves a note off the code it was written about.
---- Emptying the buffer cancels — `remove` is still the only thing that destroys
---- a note.
----@param id string|nil the note to edit; omit it for the one at the cursor
----@return nil
-function M.edit(id)
-  local list, repo = resolve_ids(id)
-  if #list == 0 or not repo then
-    return nil
-  end
-  local note = store.get(repo, list[1])
+--- The composer half of `edit`, reached once it is settled which note that is.
+---@param repo table
+---@param id string
+local function edit_note(repo, id)
+  local note = store.get(repo, id)
   if not note then
-    util.warn('no note ' .. tostring(list[1]))
+    util.warn('no note ' .. tostring(id))
     return nil
   end
 
@@ -264,6 +290,22 @@ function M.edit(id)
     end
     render.refresh()
     util.notify(('note %s updated'):format(note.id))
+  end)
+  return nil
+end
+
+--- Rewrite a note's text in the composer, prefilled with what it says now.
+--- Only the words change: the anchor, the status and the context stay as they
+--- were, so an edit never moves a note off the code it was written about.
+--- Emptying the buffer cancels — `remove` is still the only thing that destroys
+--- a note.
+---@param id string|nil the note to edit; omit it for the one at the cursor
+---@return nil
+function M.edit(id)
+  resolve_ids(id, 'edit which note?', function(list, repo)
+    if #list > 0 then
+      edit_note(repo, list[1])
+    end
   end)
   return nil
 end
@@ -385,20 +427,25 @@ end
 ---@param ids string|string[]|nil
 ---@return boolean
 function M.remove(ids)
-  local list, repo = resolve_ids(ids)
-  if #list == 0 or not repo then
-    return false
-  end
-  -- read the summary before it is gone: this is not undoable, so the message
-  -- has to say what went, not which id went
-  local only = #list == 1 and store.get(repo, list[1]) or nil
-  local label = only and only.summary ~= '' and only.summary or list[1]
-  local n = store.remove(repo, list)
-  render.refresh()
-  if n > 0 then
-    util.notify(n == 1 and ('removed: %s'):format(label) or ('%d notes removed'):format(n))
-  end
-  return n > 0
+  -- false while a chooser is still up: nothing has gone yet, and saying it did
+  -- would be a lie to whoever asked
+  local removed = false
+  resolve_ids(ids, 'delete which note?', function(list, repo)
+    if #list == 0 then
+      return
+    end
+    -- read the summary before it is gone: this is not undoable, so the message
+    -- has to say what went, not which id went
+    local only = #list == 1 and store.get(repo, list[1]) or nil
+    local label = only and only.summary ~= '' and only.summary or list[1]
+    local n = store.remove(repo, list)
+    render.refresh()
+    if n > 0 then
+      util.notify(n == 1 and ('removed: %s'):format(label) or ('%d notes removed'):format(n))
+    end
+    removed = n > 0
+  end)
+  return removed
 end
 
 local function jump(delta)
