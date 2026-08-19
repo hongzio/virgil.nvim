@@ -51,14 +51,16 @@ end
 local seeded = false
 local counter = 0
 
---- Short, collision-resistant note id.
-function M.uid()
+--- Short, collision-resistant id. `prefix` says what it names: `n` a note,
+--- `r` a reply.
+---@param prefix string|nil
+function M.uid(prefix)
   if not seeded then
     math.randomseed(os.time() + vim.uv.os_getpid())
     seeded = true
   end
   counter = counter + 1
-  return ('n-%x%04x%x'):format(os.time() % 0xffffff, math.random(0, 0xffff), counter % 0xf)
+  return ('%s-%x%04x%x'):format(prefix or 'n', os.time() % 0xffffff, math.random(0, 0xffff), counter % 0xf)
 end
 
 --- Exact bytes the buffer would be written as, so `git hash-object` agrees with git.

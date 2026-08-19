@@ -40,6 +40,45 @@ local function decode(content)
   return data
 end
 
+--- A reply carries no anchor of its own: it points at the note, and the note
+--- points at the code. Anything without words to say is not a reply.
+---@param reply any
+---@return table|nil
+local function normalize_reply(reply)
+  if type(reply) ~= 'table' then
+    return nil
+  end
+  reply.body = type(reply.body) == 'string' and reply.body or ''
+  if vim.trim(reply.body) == '' then
+    return nil
+  end
+  if type(reply.id) ~= 'string' or reply.id == '' then
+    reply.id = util.uid('r')
+  end
+  reply.author = reply.author or ''
+  reply.created_at = reply.created_at or util.now()
+  return reply
+end
+
+--- Replace `note.replies` with a list the rest of the code can walk without
+--- guarding: every entry has an id, an author and something to say.
+---@param note table
+---@return table note
+local function normalize_replies(note)
+  local out, seen = {}, {}
+  if type(note.replies) == 'table' then
+    for _, raw in ipairs(note.replies) do
+      local reply = normalize_reply(raw)
+      if reply and not seen[reply.id] then
+        seen[reply.id] = true
+        table.insert(out, reply)
+      end
+    end
+  end
+  note.replies = out
+  return note
+end
+
 --- Normalize a decoded note so the rest of the code never guards for missing fields.
 local function normalize(note)
   if type(note) ~= 'table' or type(note.anchor) ~= 'table' or type(note.id) ~= 'string' then
@@ -60,7 +99,7 @@ local function normalize(note)
   if type(note.context) ~= 'table' then
     note.context = nil
   end
-  return note
+  return normalize_replies(note)
 end
 
 local function index(state)
@@ -119,10 +158,48 @@ local function encode(state)
     if copy.rationale == '' then
       copy.rationale = nil
     end
+    if #(copy.replies or {}) == 0 then
+      copy.replies = nil
+    end
     table.insert(parts, (i == 1 and '\n    ' or ',\n    ') .. vim.json.encode(copy))
   end
   table.insert(parts, (#state.notes > 0 and '\n  ' or '') .. ']\n}\n')
   return table.concat(parts)
+end
+
+--- Take the replies another instance wrote and we have not seen.
+---
+--- Everywhere else the note we hold wins outright, and it has to: two
+--- instances editing one note's words leaves no way to tell which wording is
+--- the later one. Replies are different — they are only ever appended, so both
+--- sides can be kept and put back in the order they were written. Only the ones
+--- deleted here stay deleted.
+---@param ours table
+---@param theirs table
+---@param dropped table<string, boolean>|nil
+local function merge_replies(ours, theirs, dropped)
+  local have = {}
+  for _, reply in ipairs(ours.replies or {}) do
+    have[reply.id] = true
+  end
+  local added = false
+  for _, reply in ipairs(theirs.replies or {}) do
+    if not have[reply.id] and not (dropped and dropped[reply.id]) then
+      ours.replies = ours.replies or {}
+      table.insert(ours.replies, reply)
+      added = true
+    end
+  end
+  if added then
+    -- the timestamps are ISO-8601 UTC, so sorting them as strings is sorting
+    -- them as times
+    table.sort(ours.replies, function(a, b)
+      if a.created_at == b.created_at then
+        return a.id < b.id
+      end
+      return (a.created_at or '') < (b.created_at or '')
+    end)
+  end
 end
 
 --- Write the notes back, merging in anything another instance added meanwhile.
@@ -146,7 +223,9 @@ function M.save(repo)
       end
       for _, raw in ipairs(data.notes) do
         local note = normalize(raw)
-        if note and not ours[note.id] and not (state.deleted and state.deleted[note.id]) then
+        if note and ours[note.id] then
+          merge_replies(ours[note.id], note, state.dropped_replies)
+        elseif note and not (state.deleted and state.deleted[note.id]) then
           table.insert(merged, note)
         end
       end
@@ -205,6 +284,7 @@ function M.add(repo, note)
   while not note.id or state.by_id[note.id] do
     note.id = util.uid()
   end
+  normalize_replies(note)
   table.insert(state.notes, note)
   index(state)
   M.save(repo)
@@ -233,6 +313,107 @@ function M.update(repo, id, fields)
   index(state)
   M.save(repo)
   return note
+end
+
+---@param repo table
+---@param note_id string
+---@param reply_id string
+---@return table|nil
+function M.get_reply(repo, note_id, reply_id)
+  local note = M.state(repo).by_id[note_id]
+  for _, reply in ipairs(note and note.replies or {}) do
+    if reply.id == reply_id then
+      return reply
+    end
+  end
+  return nil
+end
+
+--- Append a reply to a note and flush.
+---
+--- The note's `updated_at` moves with it: a thread someone answered this
+--- morning is not a note nobody has touched since March, and `prune` reads that
+--- field to decide what has gone cold.
+---@param repo table
+---@param note_id string
+---@param fields table `{ body, author, created_at }`
+---@return table|nil reply
+function M.add_reply(repo, note_id, fields)
+  local state = M.state(repo)
+  local note = state.by_id[note_id]
+  if not note then
+    return nil
+  end
+  note.replies = note.replies or {}
+  local taken = {}
+  for _, reply in ipairs(note.replies) do
+    taken[reply.id] = true
+  end
+  local reply = normalize_reply({
+    id = fields.id,
+    author = fields.author or '',
+    body = fields.body or '',
+    created_at = fields.created_at,
+  })
+  if not reply then
+    return nil
+  end
+  while taken[reply.id] do
+    reply.id = util.uid('r')
+  end
+  table.insert(note.replies, reply)
+  note.updated_at = util.now()
+  M.save(repo)
+  return reply
+end
+
+--- Apply `fields` to one reply and flush.
+---@param repo table
+---@param note_id string
+---@param reply_id string
+---@param fields table
+---@return table|nil
+function M.update_reply(repo, note_id, reply_id, fields)
+  local reply = M.get_reply(repo, note_id, reply_id)
+  if not reply then
+    return nil
+  end
+  -- checked before anything is written: emptying a reply is not a way to
+  -- delete one, and half-applying the change would leave it wordless
+  if fields.body ~= nil and vim.trim(tostring(fields.body)) == '' then
+    return nil
+  end
+  for k, v in pairs(fields) do
+    if k ~= 'id' then
+      reply[k] = v ~= vim.NIL and v or nil
+    end
+  end
+  reply.updated_at = util.now()
+  M.save(repo)
+  return reply
+end
+
+--- Delete one reply. Like `remove`, this is the only thing that destroys one.
+---@param repo table
+---@param note_id string
+---@param reply_id string
+---@return boolean
+function M.remove_reply(repo, note_id, reply_id)
+  local state = M.state(repo)
+  local note = state.by_id[note_id]
+  for i, reply in ipairs(note and note.replies or {}) do
+    if reply.id == reply_id then
+      table.remove(note.replies, i)
+      -- remembered, so a merge with another instance's copy does not bring it
+      -- back the moment it is written out
+      state.dropped_replies = state.dropped_replies or {}
+      state.dropped_replies[reply_id] = true
+      note.updated_at = util.now()
+      M.save(repo)
+      return true
+    end
+  end
+  return false
 end
 
 ---@param repo table

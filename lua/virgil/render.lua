@@ -135,13 +135,25 @@ local BORDERS = {
   heavy = { '┏', '━', '┓', '┃', '┛', '━', '┗', '┃' },
 }
 
+--- The left and right ends of a divider row, per style. `nvim_open_win`'s
+--- border has no tees in it, so a hand-rolled eight-character border has none
+--- to take: there the verticals stand in, which is what that frame is made of
+--- anyway.
+local TEES = {
+  single = { '├', '┤' },
+  rounded = { '├', '┤' },
+  double = { '╠', '╣' },
+  heavy = { '┣', '┫' },
+}
+
 ---@param spec string|table|boolean
 ---@return table|nil chars nil means "no frame"
+---@return table|nil tees `{ left, right }` for a reply divider
 local function border_chars(spec)
   if type(spec) == 'table' and #spec >= 8 then
-    return spec
+    return spec, { spec[8], spec[4] }
   end
-  return BORDERS[spec]
+  return BORDERS[spec], TEES[spec]
 end
 
 local strw = vim.fn.strdisplaywidth
@@ -196,12 +208,47 @@ local function joined(parts, sep)
   return table.concat(out, sep or ' ')
 end
 
+--- The thread under a note, as rows to be appended to its body.
+---
+--- A reply is not a note: it has no anchor, no status and no changeset of its
+--- own, so it is drawn inside the note's box rather than beside it. Each one
+--- opens with a divider carrying its author, and the box says who answered
+--- without a line spent on saying it.
+---@param note table
+---@param cfg table
+---@param width integer cells available for wrapped text
+---@return table[] rows `{ {text, hl, divider = true|nil}, … }`
+local function reply_rows(note, cfg, width)
+  local rows = {}
+  if not cfg.show_replies then
+    return rows
+  end
+  for _, reply in ipairs(note.replies or {}) do
+    local who = cfg.show_author and reply.author or ''
+    -- a name too long to ride in the divider drops below it as ordinary text,
+    -- the same trade the summary makes with the top border. What must not be
+    -- overrun is the frame; below it the name wraps like everything else
+    if strw(who) > width - 1 then
+      table.insert(rows, { '', 'VirgilAuthor', divider = true })
+      for _, line in ipairs(util.wrap(who, width)) do
+        table.insert(rows, { line, 'VirgilAuthor' })
+      end
+    else
+      table.insert(rows, { who, 'VirgilAuthor', divider = true })
+    end
+    for _, line in ipairs(util.wrap(reply.body, width)) do
+      table.insert(rows, { line, 'VirgilReply' })
+    end
+  end
+  return rows
+end
+
 --- The note as a framed box drawn above the code line.
 ---
 --- The summary rides in the top border, so a note with only a summary costs two
 --- screen lines instead of three. When it is too long to fit there the border
 --- goes plain and the summary wraps into the body — nothing is ever truncated.
-local function framed_block(note, pos, opts, chars)
+local function framed_block(note, pos, opts, chars, tees)
   local cfg = config.options.render
   local function hl(group)
     return opts.dim and 'VirgilDim' or group
@@ -265,10 +312,14 @@ local function framed_block(note, pos, opts, chars)
       table.insert(body, 1, { (i == 1 and (title[1] .. ' ') or '  ') .. wrapped[i], 'VirgilSummary' })
     end
   end
+  -- last, and in the order they were written: everything above is what the note
+  -- itself says
+  vim.list_extend(body, reply_rows(note, cfg, inner))
 
   local width = chunks_width(left) + 1 + chunks_width(right)
   for _, line in ipairs(body) do
-    width = math.max(width, strw(line[1]) + 4)
+    -- a divider spends two more cells than a body row: "├─ " and " ─┤"
+    width = math.max(width, strw(line[1]) + (line.divider and 6 or 4))
   end
   width = math.min(math.max(width, 8), avail)
 
@@ -289,11 +340,24 @@ local function framed_block(note, pos, opts, chars)
   table.insert(out, top)
 
   for _, line in ipairs(body) do
-    local pad = math.max(width - 4 - strw(line[1]), 0)
-    local row = pad_chunk(B(chars[8] .. ' '))
-    table.insert(row, { line[1], hl(line[2]) })
-    table.insert(row, B(string.rep(' ', pad) .. ' ' .. chars[4]))
-    table.insert(out, row)
+    if line.divider then
+      local tee = tees or { chars[8], chars[4] }
+      local row
+      if line[1] == '' then
+        row = pad_chunk(B(tee[1] .. string.rep(chars[2], math.max(width - 2, 1)) .. tee[2]))
+      else
+        row = pad_chunk(B(tee[1] .. chars[2] .. ' '))
+        table.insert(row, { line[1], hl(line[2]) })
+        table.insert(row, B(' ' .. string.rep(chars[2], math.max(width - 5 - strw(line[1]), 1)) .. tee[2]))
+      end
+      table.insert(out, row)
+    else
+      local pad = math.max(width - 4 - strw(line[1]), 0)
+      local row = pad_chunk(B(chars[8] .. ' '))
+      table.insert(row, { line[1], hl(line[2]) })
+      table.insert(row, B(string.rep(' ', pad) .. ' ' .. chars[4]))
+      table.insert(out, row)
+    end
   end
 
   table.insert(out, pad_chunk(B(chars[7] .. string.rep(chars[6], math.max(width - 2, 1)) .. chars[5])))
@@ -326,6 +390,14 @@ local function bar_block(note, pos, opts)
   for _, line in ipairs(body) do
     table.insert(out, { bar, { '  ' .. line[1], hl(line[2]) } })
   end
+  -- no frame to hang a divider on, so the thread is marked by an arrow instead
+  for _, line in ipairs(reply_rows(note, cfg, width - 2)) do
+    if line.divider then
+      table.insert(out, { bar, { '  ↳ ' .. (line[1] ~= '' and line[1] or 'reply'), hl('VirgilAuthor') } })
+    else
+      table.insert(out, { bar, { '    ' .. line[1], hl(line[2]) } })
+    end
+  end
   return out
 end
 
@@ -334,9 +406,9 @@ end
 ---@param opts table
 ---@return table[] virt_lines
 local function block(note, pos, opts)
-  local chars = border_chars(config.options.render.border)
+  local chars, tees = border_chars(config.options.render.border)
   if chars then
-    return framed_block(note, pos, opts, chars)
+    return framed_block(note, pos, opts, chars, tees)
   end
   return bar_block(note, pos, opts)
 end

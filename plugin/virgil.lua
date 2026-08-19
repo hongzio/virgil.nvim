@@ -22,6 +22,9 @@ local function set_highlights()
     VirgilIcon = { link = 'DiagnosticInfo' },
     VirgilSummary = { link = 'Normal' },
     VirgilRationale = { link = 'Comment' },
+    -- a reply is a new statement, not a footnote to the note's own words: it
+    -- reads at the summary's weight rather than the rationale's
+    VirgilReply = { link = 'Normal' },
     -- Comment, not NonText: NonText is for characters that aren't really in the
     -- buffer, and a colorscheme may draw it in the background color.
     VirgilAuthor = { link = 'Comment' },
@@ -121,10 +124,11 @@ local subcommands = {
           col = 1,
           note_id = note.id,
           summary = note.summary,
-          text = ('[%s] %s%s'):format(
+          text = ('[%s] %s%s%s'):format(
             note.status,
             note.summary,
-            pos and pos.status ~= 'ok' and (' (' .. pos.status .. ')') or ''
+            pos and pos.status ~= 'ok' and (' (' .. pos.status .. ')') or '',
+            #(note.replies or {}) > 0 and ('  ↩' .. #note.replies) or ''
           ),
         }
       end
@@ -134,6 +138,15 @@ local subcommands = {
   end,
   remove = function(args)
     require('virgil').remove(args[1])
+  end,
+  -- `:Virgil reply <note-id>`; with no id, the note at the cursor
+  reply = function(args)
+    require('virgil').reply(args[1])
+  end,
+  -- and the pair of it, since deleting a reply is as irreversible as deleting
+  -- a note: `:Virgil unreply [note-id] [reply-id]`
+  unreply = function(args)
+    require('virgil').unreply(args[1], args[2])
   end,
   toggle = function(args)
     require('virgil').toggle(args[1])
@@ -308,6 +321,17 @@ local plugs = {
   -- the note at the cursor, and irreversibly: nothing else in virgil destroys one
   ['<Plug>(virgil-remove)'] = function()
     require('virgil').remove()
+  end,
+  -- answers the note at the cursor; the reply hangs under it in the same box
+  ['<Plug>(virgil-reply)'] = function()
+    require('virgil').reply()
+  end,
+  -- both of these ask which reply when the note has more than one
+  ['<Plug>(virgil-reply-edit)'] = function()
+    require('virgil').update_reply()
+  end,
+  ['<Plug>(virgil-reply-remove)'] = function()
+    require('virgil').unreply()
   end,
   ['<Plug>(virgil-toggle)'] = function()
     require('virgil').toggle()

@@ -18,6 +18,16 @@ function M.to_agent_context(notes)
       by_path[path] = {}
       table.insert(order, path)
     end
+    local replies
+    for _, reply in ipairs(note.replies or {}) do
+      replies = replies or {}
+      table.insert(replies, {
+        id = reply.id,
+        author = reply.author ~= '' and reply.author or nil,
+        body = reply.body,
+        created_at = reply.created_at,
+      })
+    end
     table.insert(by_path[path], {
       newRange = { start = note.anchor.line, ['end'] = note.anchor.end_line or note.anchor.line },
       summary = note.summary,
@@ -25,6 +35,7 @@ function M.to_agent_context(notes)
       author = note.author ~= '' and note.author or nil,
       status = note.status,
       id = note.id,
+      replies = replies,
     })
   end
   table.sort(order)
@@ -59,6 +70,14 @@ function M.to_markdown(notes)
     if note.rationale ~= '' then
       for _, l in ipairs(vim.split(note.rationale, '\n', { plain = true })) do
         table.insert(out, '  ' .. l)
+      end
+    end
+    -- nested under the note, which is what a reply is
+    for _, reply in ipairs(note.replies or {}) do
+      local lines = vim.split(reply.body, '\n', { plain = true })
+      table.insert(out, ('  - **%s** %s'):format(reply.author ~= '' and reply.author or '?', lines[1] or ''))
+      for i = 2, #lines do
+        table.insert(out, '    ' .. lines[i])
       end
     end
   end
@@ -162,6 +181,18 @@ function M.import(repo, opts)
       else
         a = { kind = 'worktree', path = f.path, line = line, end_line = endl, text = '', before = {}, after = {} }
       end
+      -- ids are not carried over: they are this repository's to hand out, and
+      -- the store fills in whatever is missing
+      local replies = {}
+      for _, reply in ipairs(ann.replies or {}) do
+        if type(reply) == 'table' then
+          table.insert(replies, {
+            author = reply.author or '',
+            body = reply.body or reply.text or '',
+            created_at = reply.created_at,
+          })
+        end
+      end
       store.add(repo, {
         anchor = a,
         author = ann.author or opts.author or 'import',
@@ -170,6 +201,7 @@ function M.import(repo, opts)
         status = ann.status or 'open',
         created_at = util.now(),
         context = opts.changeset and { changeset = opts.changeset } or nil,
+        replies = replies,
       })
       count = count + 1
     end

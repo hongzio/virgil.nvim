@@ -115,6 +115,8 @@ there.
 :Virgil notes            " list notes
 :Virgil toggle           " cycle visibility: default → all → off
 :Virgil remove           " delete the note near the cursor (irreversible)
+:Virgil reply            " answer the note near the cursor
+:Virgil unreply          " delete one of a note's replies (irreversible)
 :Virgil review [base] [head]   " open a changeset as diff tabs; with no arguments, pick one
 :Virgil files            " changed-file picker
 :Virgil sidebar          " toggle the changeset's changed-file list
@@ -139,6 +141,41 @@ one below. Rather than guess, virgil puts the candidates up in the configured pi
 asks which one — an irreversible delete is no place for a coin toss. Aborting that list
 leaves every note where it was.
 
+### Replies
+
+A note can be answered, and the answers hang under it in the same box:
+
+```
+┌─ ● seq is not synchronised ──────────────────────── agent ─┐
+│ reconcile() runs on another goroutine and touches b.seq    │
+│ without the mutex; two makers can mint the same id.        │
+├─ hongzio ──────────────────────────────────────────────────┤
+│ the mutex wraps the whole mint path now — a1b2c3d          │
+├─ agent ────────────────────────────────────────────────────┤
+│ reap() still takes the two locks the other way round       │
+└────────────────────────────────────────────────────────────┘
+```
+
+**A reply is not a note.** It has no anchor, no status and no changeset of its own: it
+says something about the note, and the note is what says something about the code. So it
+drifts with the note it answers, it is exported with it, and deleting the note takes the
+thread with it. There is one level — a reply to a reply is another reply on the same
+note, which is what the box shows anyway.
+
+`:Virgil reply` answers the note at the cursor. The whole composer buffer is the reply:
+no first line is promoted to a summary, because the note it hangs under already has one.
+An agent writes one over the socket the same way it writes a note, and it appears in the
+box the moment it lands.
+
+`<Plug>(virgil-reply-edit)` rewrites a reply and `:Virgil unreply` deletes one. Both ask
+which one when the note has more than one, the same way `remove` asks which note. Emptying
+the composer leaves the reply as it was; `unreply` is the only thing that destroys one.
+
+Two Neovims answering the same note both keep their answers. Everywhere else the copy in
+front of you wins a conflict — two instances rewording one note leaves no way to tell
+which wording came later — but replies are only ever appended, so both sides are kept and
+put back in the order they were written.
+
 In the `:Virgil notes` list (when using fzf-lua):
 
 | Key | Action |
@@ -146,6 +183,8 @@ In the `:Virgil notes` list (when using fzf-lua):
 | `<CR>` | jump to the note |
 | `<C-e>` | edit the note's text |
 | `<C-x>` | **delete the note** (irreversible) |
+
+A row's `↩2` is the size of the thread hanging under that note.
 
 Selecting several rows with `<Tab>` acts on all of them at once — except `<C-e>`, which has
 no sensible meaning for several notes and says so rather than editing one of the rows you
@@ -166,6 +205,7 @@ local map = vim.keymap.set
 map({ 'n', 'x' }, '<leader>vv', '<Plug>(virgil-note)',    { desc = 'Virgil note' })
 map('n', '<leader>ve', '<Plug>(virgil-edit)',             { desc = 'Virgil edit note at cursor' })
 map('n', '<leader>vx', '<Plug>(virgil-remove)',           { desc = 'Virgil delete note at cursor' })
+map('n', '<leader>vc', '<Plug>(virgil-reply)',            { desc = 'Virgil reply to note at cursor' })
 map('n', '<leader>vt', '<Plug>(virgil-toggle)',           { desc = 'Virgil toggle visibility' })
 map('n', '<leader>vl', '<Cmd>Virgil notes<CR>',           { desc = 'Virgil list notes' })
 
@@ -268,6 +308,10 @@ nvim --server "$SOCK" --remote-expr \
 # move the screen
 nvim --server "$SOCK" --remote-expr "v:lua.require'virgil'.open('internal/bot.go', {'line': 1036})"
 
+# answer a note someone left — it appears under it, in the same box
+nvim --server "$SOCK" --remote-expr \
+  "json_encode(v:lua.require'virgil'.reply('n-abc', {'body': 'fixed in a1b2c3d', 'author': 'agent'}))"
+
 # read
 nvim --server "$SOCK" --remote-expr "json_encode(v:lua.require'virgil'.notes({'status': 'open'}))"
 ```
@@ -326,6 +370,11 @@ virgil.status()                    -- current view's content address, path, curs
 virgil.note({ path, line, end_line, summary, rationale, author })
 virgil.notes({ path, status, changeset, id })  -- stored anchor + projection into the current view
 virgil.update(id, { summary = '…' })
+virgil.reply(id, { body = '…', author = '…' })  -- answer a note; the reply hangs under it
+                                   -- Omit the body for the composer, the id for the
+                                   -- note under the cursor
+virgil.update_reply(note_id, reply_id, { body = '…' })  -- reword a reply
+virgil.unreply(note_id, reply_id)  -- delete one. Omit either id to be asked which
 virgil.edit(id)                    -- the same rewrite, through the compose window
                                    -- Omit the id for the note under the cursor
 virgil.open(path, { line = 1036, rev = nil })
@@ -353,6 +402,9 @@ the hash of the content at the time the note was written; it is used for anchor 
 (promotion to a `blob` anchor once that content is committed) and for finding
 not-yet-committed content again.
 
+A note's replies live inside it, in a `replies` list. There is nothing else to keep for
+them — no anchor, no address — just who said what, and when.
+
 Notes are personal by default. Handing them to the team takes an explicit `:Virgil export`.
 A permanent fact the team should share belongs in a code comment or the docs — a note's
 place is *an observation that is true for me right now*, a suspicion not yet confirmed, or
@@ -375,6 +427,7 @@ require('virgil').setup({
     max_width = 100,
     show_author = true,
     show_rationale = true,
+    show_replies = true, -- draw a note's replies under it, in the same box
     align_indent = true, -- align the note block to the code's indentation
   },
   changeset = {
@@ -390,7 +443,7 @@ require('virgil').setup({
 
 Highlight groups (all `default` links, so a colorscheme wins):
 `VirgilBorder` `VirgilSign` `VirgilIcon` `VirgilSummary` `VirgilRationale`
-`VirgilAuthor` `VirgilStale` `VirgilOrphan` `VirgilResolved` `VirgilDim`.
+`VirgilReply` `VirgilAuthor` `VirgilStale` `VirgilOrphan` `VirgilResolved` `VirgilDim`.
 
 ## When a note drifts
 
@@ -415,6 +468,7 @@ the drift itself is the signal that the code changed underneath it.
 | One sidebar across a changeset's tabs | One window per tab over a single shared buffer — what differs between tabs is which row carries the `▸`, and that is a redraw rather than another window's worth of state |
 | Filetype of the left-hand blob | `filetype` is left unset and only treesitter (or `syntax` if unavailable) is enabled. You get highlighting without a language server attaching to a buffer that has no file. Change it with `changeset.highlight = 'filetype'` |
 | Socket lifetime | The first instance takes the canonical path; later ones fall back to `<path>.<pid>`. Socket files from dead instances are cleaned up automatically |
+| Replying to a note | The reply is stored inside the note, not as a note carrying a parent id. An anchor is what makes something a note, and a reply has none — giving it one would let a thread drift apart line by line, and would put the answer on screen as a second box beside the question |
 | Telling agent notes from human ones | It goes no further than stamping the name (`author`) dimly in the note's header. Colors aren't split because the distinction that matters is not "who wrote it" but "is this about the change in front of me" — and emphasis versus dimming already carries that |
 
 ## Tests

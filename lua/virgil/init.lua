@@ -294,6 +294,171 @@ local function edit_note(repo, id)
   return nil
 end
 
+--- Which reply of `note_id` does this act on?
+---
+--- The same shape as `resolve_ids` one level down: an explicit id runs at once,
+--- a note with one reply needs no asking, and only a real choice puts a picker
+--- up — after which `act` runs once this function has already returned.
+---@param repo table
+---@param note_id string
+---@param reply_id string|nil
+---@param prompt string
+---@param act fun(reply: table)
+local function resolve_reply(repo, note_id, reply_id, prompt, act)
+  local note = store.get(repo, note_id)
+  if not note then
+    util.warn('no note ' .. tostring(note_id))
+    return
+  end
+  local replies = note.replies or {}
+  if #replies == 0 then
+    util.warn('that note has no replies')
+    return
+  end
+  if type(reply_id) == 'string' and reply_id ~= '' then
+    local reply = store.get_reply(repo, note_id, reply_id)
+    if not reply then
+      util.warn('no reply ' .. reply_id)
+      return
+    end
+    return act(reply)
+  end
+  if #replies == 1 then
+    return act(replies[1])
+  end
+  ui.select(replies, {
+    prompt = prompt,
+    format_item = function(r)
+      return ('%s  %s'):format(util.fit(r.author ~= '' and r.author or '?', 12), util.fit((r.body:gsub('%s+', ' ')), 60))
+    end,
+  }, function(choice)
+    if choice then
+      act(choice)
+    end
+  end)
+end
+
+--- Answer a note. Replies hang under it inside the same box, in the order they
+--- were written.
+---
+--- A reply is not a note of its own: it has no anchor, no status and no
+--- changeset. It says something about the note, and the note is what says
+--- something about the code. Deleting the note takes the thread with it.
+---
+--- With a `body` this returns immediately, which is the path agents take;
+--- without one the composer opens, and the whole buffer is the reply.
+---@param id string|nil the note to answer; omit it for the one at the cursor
+---@param opts table|nil `{ body, author }`
+---@return table|nil reply
+function M.reply(id, opts)
+  opts = opts or {}
+  -- nil while a chooser is still up: nothing has been written yet
+  local written = nil
+  resolve_ids(id, 'reply to which note?', function(list, repo)
+    if #list == 0 then
+      return
+    end
+    local note_id = list[1]
+    local note = store.get(repo, note_id)
+    if not note then
+      util.warn('no note ' .. tostring(note_id))
+      return
+    end
+    local author = opts.author or config.options.author or vim.env.USER or 'me'
+
+    local function save(body)
+      -- read back through the store: the composer was open for a while, and the
+      -- note may have been removed from another instance meanwhile
+      local reply = store.add_reply(repo, note_id, { author = author, body = body })
+      if not reply then
+        util.warn(('note %s is gone'):format(note_id))
+        return nil
+      end
+      render.refresh()
+      return reply
+    end
+
+    -- whitespace is not an answer: a body of blanks opens the composer rather
+    -- than writing a reply nobody can read
+    local body = opts.body and vim.trim(tostring(opts.body)) or nil
+    if body and body ~= '' then
+      written = save(body)
+      return
+    end
+    local subject = note.summary ~= '' and note.summary or note_id
+    ui.compose({ title = ('reply · %s'):format(vim.trim(util.fit(subject, 48))), plain = true }, function(body)
+      local reply = save(body)
+      if reply then
+        util.notify(('replied to %s'):format(note_id))
+      end
+    end)
+  end)
+  return written
+end
+
+--- Rewrite a reply, prefilled with what it says now. Both ids may be omitted:
+--- the note at the cursor, and then its only reply or the one you pick.
+---@param note_id string|nil
+---@param reply_id string|nil
+---@param fields table|nil `{ body }`
+---@return table|nil
+function M.update_reply(note_id, reply_id, fields)
+  fields = fields or {}
+  local written = nil
+  resolve_ids(note_id, 'a reply on which note?', function(list, repo)
+    if #list == 0 then
+      return
+    end
+    local nid = list[1]
+    resolve_reply(repo, nid, reply_id, 'edit which reply?', function(reply)
+      local body = fields.body and vim.trim(tostring(fields.body)) or nil
+      if body and body ~= '' then
+        written = store.update_reply(repo, nid, reply.id, { body = body })
+        if not written then
+          util.warn(('reply %s is gone'):format(reply.id))
+          return
+        end
+        render.refresh()
+        return
+      end
+      local who = reply.author ~= '' and reply.author or reply.id
+      ui.compose({ title = ('edit reply · %s'):format(who), plain = true, body = reply.body }, function(body)
+        if not store.update_reply(repo, nid, reply.id, { body = body }) then
+          util.warn(('reply %s is gone'):format(reply.id))
+          return
+        end
+        render.refresh()
+        util.notify(('reply %s updated'):format(reply.id))
+      end)
+    end)
+  end)
+  return written
+end
+
+--- Delete a reply. Like `remove`, this is not undoable, and it is the only
+--- thing that destroys one — emptying the composer leaves it as it was.
+---@param note_id string|nil
+---@param reply_id string|nil
+---@return boolean
+function M.unreply(note_id, reply_id)
+  local removed = false
+  resolve_ids(note_id, 'a reply on which note?', function(list, repo)
+    if #list == 0 then
+      return
+    end
+    local nid = list[1]
+    resolve_reply(repo, nid, reply_id, 'delete which reply?', function(reply)
+      if not store.remove_reply(repo, nid, reply.id) then
+        return
+      end
+      render.refresh()
+      removed = true
+      util.notify(('removed reply by %s'):format(reply.author ~= '' and reply.author or reply.id))
+    end)
+  end)
+  return removed
+end
+
 --- Rewrite a note's text in the composer, prefilled with what it says now.
 --- Only the words change: the anchor, the status and the context stay as they
 --- were, so an edit never moves a note off the code it was written about.

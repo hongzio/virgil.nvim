@@ -199,6 +199,8 @@ Each entry carries the stored `anchor` plus a `projected` position for the curre
 - `"orphan"` — the anchored content can't be found (an abandoned commit, say)
 - No `projected` at all means that content isn't in the current view (a deleted line, for instance)
 
+Each entry also carries `replies`, the thread hanging under that note — see §10.
+
 ## 9. Amending and deleting
 
 ```bash
@@ -209,7 +211,33 @@ Each entry carries the stored `anchor` plus a `projected` position for the curre
 Both take id lists too: `remove(['n-a', 'n-b'])`. A note that no longer holds is deleted
 or reworded; there is no closed state for virgil to put it in.
 
-## 10. Moving the human's screen
+## 10. Replying
+
+A note can be answered, and the answer is drawn inside the same box, under the note:
+
+```bash
+… .reply('n-abc', {'body': 'the mutex wraps the whole mint path now — a1b2c3d', 'author': 'agent'})
+```
+
+It returns `{'id': 'r-…', …}`, or `null` if there is no such note. Long or awkward text
+goes through a file exactly as in §2 — the payload is then
+`reply(id, json_decode(...))`, with the id as a separate argument.
+
+**Reply rather than write a second note when what you have to say is about the note, not
+about the code.** Confirming a suspicion someone else pinned, saying what you changed,
+disagreeing with a reading — those belong under the note. A new point on a different line
+is a new note.
+
+A reply has no anchor and no status: it goes where its note goes, and it dies with it.
+`body` is the whole of it — there is no summary line, because the note above it already
+has one. Threads are one level deep; answering a reply is another reply on the same note.
+
+```bash
+… .update_reply('n-abc', 'r-def', {'body': '…'})   # reword your own
+… .unreply('n-abc', 'r-def')                       # delete it. Irreversible
+```
+
+## 11. Moving the human's screen
 
 To put the code you're describing in front of them:
 
@@ -221,20 +249,21 @@ Passing `rev` opens that revision's content read-only: `{'line': 6, 'rev': 'HEAD
 The return value is the post-jump `status()`, so you can confirm it landed. The human may
 be in the middle of editing — move them **only when it matters**.
 
-## 11. When things fail
+## 12. When things fail
 
 | Symptom | Meaning |
 |---|---|
 | `note()` returns `null` | That path isn't in the repo, or the file doesn't exist. Check it's relative to `status().repo.root` |
 | `status().view.kind == "none"` | The human isn't in a file buffer (a terminal, a picker). Attach with an explicit `path` |
 | `remove()` returns `false` | No such id |
+| `reply()` returns `null` | No such note id, or the `body` was blank |
 | Socket connection fails | That instance is dead. Find one again via §1 |
 | Outside a repo | virgil only works inside a git repository |
 
 **No failure ever silently deletes a note.** When a position can't be found, it is marked
 `stale`/`orphan` and shown to the human.
 
-## 12. Checklist
+## 13. Checklist
 
 Before leaving a note:
 
@@ -244,3 +273,4 @@ Before leaving a note:
 4. This is **not** a permanent fact that belongs in a code comment
 5. `author` carries my name
 6. The returned `anchor.text` is the line I meant
+7. What I am saying is about the code — if it is about someone else's note, it is a `reply`

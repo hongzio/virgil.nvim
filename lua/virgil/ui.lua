@@ -8,19 +8,28 @@ local compose_seq = 0
 
 --- Floating scratch window for writing a note.
 --- First non-empty line is the summary, everything after it the rationale.
----@param opts table `{ title, summary, rationale }`
----@param on_done fun(summary: string, rationale: string)
+---
+--- `plain` drops that split: the whole buffer is one piece of text, which is
+--- what a reply is. A reply has no summary to head it — it is already hanging
+--- under the note that has one.
+---@param opts table `{ title, summary, rationale }`, or `{ title, plain, body }`
+---@param on_done fun(summary: string, rationale: string) `fun(body)` when `plain`
 function M.compose(opts, on_done)
   opts = opts or {}
   local buf = vim.api.nvim_create_buf(false, true)
   compose_seq = compose_seq + 1
   pcall(vim.api.nvim_buf_set_name, buf, ('virgil://note/%d'):format(compose_seq))
 
+  local prefilled = opts.plain and (opts.body or '') ~= '' or (opts.summary or '') ~= ''
   local lines = {}
-  table.insert(lines, opts.summary or '')
-  if opts.rationale and opts.rationale ~= '' then
-    table.insert(lines, '')
-    vim.list_extend(lines, vim.split(opts.rationale, '\n', { plain = true }))
+  if opts.plain then
+    lines = vim.split(opts.body or '', '\n', { plain = true })
+  else
+    table.insert(lines, opts.summary or '')
+    if opts.rationale and opts.rationale ~= '' then
+      table.insert(lines, '')
+      vim.list_extend(lines, vim.split(opts.rationale, '\n', { plain = true }))
+    end
   end
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 
@@ -58,11 +67,39 @@ function M.compose(opts, on_done)
     end
   end
 
+  --- An empty composer is a cancel, and on something that already exists that
+  --- is not the same as discarding it: say which one happened.
+  local function abandon()
+    util.warn(prefilled and 'left as it was' or 'empty note discarded')
+    finished = true
+    close()
+  end
+
   local function submit()
     if finished then
       return
     end
     local content = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+
+    if opts.plain then
+      local text = vim.deepcopy(content)
+      while #text > 0 and vim.trim(text[1]) == '' do
+        table.remove(text, 1)
+      end
+      while #text > 0 and vim.trim(text[#text]) == '' do
+        table.remove(text)
+      end
+      if #text == 0 then
+        abandon()
+        return
+      end
+      finished = true
+      vim.bo[buf].modified = false
+      close()
+      on_done(table.concat(text, '\n'))
+      return
+    end
+
     local summary, rest = '', {}
     for i, l in ipairs(content) do
       if summary == '' and vim.trim(l) ~= '' then
@@ -78,11 +115,7 @@ function M.compose(opts, on_done)
       table.remove(rest)
     end
     if summary == '' then
-      -- an emptied composer is a cancel, and on an existing note that is not the
-      -- same thing as discarding it: say which one happened
-      util.warn(opts.summary and opts.summary ~= '' and 'left as it was' or 'empty note discarded')
-      finished = true
-      close()
+      abandon()
       return
     end
     finished = true
@@ -105,7 +138,7 @@ function M.compose(opts, on_done)
   })
 
   vim.cmd('startinsert')
-  if opts.summary and opts.summary ~= '' then
+  if prefilled then
     vim.cmd('stopinsert')
   else
     vim.api.nvim_win_set_cursor(win, { 1, 0 })

@@ -20,6 +20,7 @@ M.defaults = {
     max_width = 100, -- hard cap for wrapped note text
     show_author = true,
     show_rationale = true,
+    show_replies = true, -- draw a note's replies under it, inside the same box
     align_indent = true, -- indent the note block like the code line it hangs on
   },
 

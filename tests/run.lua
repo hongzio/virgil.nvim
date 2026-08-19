@@ -1111,6 +1111,177 @@ do
   changeset.close()
 end
 
+section('replies')
+local tdir = new_repo('threads')
+do
+  write(tdir, 'a.txt', numbered(20))
+  sh('git add -A && git commit -qm init', tdir)
+  vim.cmd('cd ' .. vim.fn.fnameescape(tdir))
+  reset_state()
+  local repo = git.repo(tdir)
+  local buf = edit(vim.fs.joinpath(tdir, 'a.txt'))
+
+  local note = virgil.note({ path = 'a.txt', line = 12, summary = 'needs an answer' })
+  local reply = virgil.reply(note.id, { body = 'looked at it, it holds', author = 'agent' })
+  check('reply returns what it wrote', type(reply) == 'table' and type(reply.id) == 'string', vim.inspect(reply))
+  eq('the note carries it', #store.get(repo, note.id).replies, 1)
+  eq('with the author it was given', store.get(repo, note.id).replies[1].author, 'agent')
+  check('and a time', reply.created_at ~= nil, vim.inspect(reply.created_at))
+  check('answering counts as touching the note', store.get(repo, note.id).updated_at ~= nil)
+
+  -- a reply has no anchor, so it is not a note and never becomes one
+  local notes_before = #store.all(repo)
+  virgil.reply(note.id, { body = 'still racing under load', author = 'hongzio' })
+  eq('a reply is not a note of its own', #store.all(repo), notes_before)
+  eq('and they keep the order they were written in', store.get(repo, note.id).replies[2].author, 'hongzio')
+  eq('blank words are not an answer', virgil.reply(note.id, { body = '   ' }), nil)
+  eq('and nothing was written', #store.get(repo, note.id).replies, 2)
+  eq('a missing note is not fatal', virgil.reply('n-nope', { body = 'hello' }), nil)
+
+  local queried = virgil.notes({ id = note.id })[1]
+  eq('notes() hands the whole thread over', #queried.replies, 2)
+  check('and it still encodes as json', pcall(vim.json.encode, queried))
+
+  -- 1. one box, with a divider naming who said what
+  render.render(buf)
+  local function rows_of(virt)
+    local out = {}
+    for _, line in ipairs(virt) do
+      table.insert(out, table.concat(vim.tbl_map(function(c)
+        return c[1]
+      end, line)))
+    end
+    return out
+  end
+  local drawn
+  for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, util.NS, 0, -1, { details = true })) do
+    local rows = rows_of(m[4].virt_lines)
+    if rows[1]:find('needs an answer', 1, true) then
+      drawn = rows
+    end
+  end
+  check('the thread is drawn', drawn ~= nil)
+  eq('inside the note\'s own box, not beside it', #drawn, 6)
+  check('the note still opens the box', vim.startswith(drawn[1], '┌'), drawn[1])
+  check('each reply opens with a divider', vim.startswith(drawn[2], '├'), drawn[2])
+  check('carrying its author', drawn[2]:find('agent', 1, true) ~= nil, drawn[2])
+  check('and closing on the frame', vim.endswith(drawn[2], '┤'), drawn[2])
+  check('the words under it', drawn[3]:find('looked at it, it holds', 1, true) ~= nil, drawn[3])
+  check('the second reply says who too', drawn[4]:find('hongzio', 1, true) ~= nil, drawn[4])
+  check('and the box closes once', vim.startswith(drawn[6], '└'), drawn[6])
+  local w = vim.fn.strdisplaywidth(drawn[1])
+  local even = true
+  for _, row in ipairs(drawn) do
+    even = even and vim.fn.strdisplaywidth(row) == w
+  end
+  check('every row of the box is the same width', even, vim.inspect(drawn))
+  eq('and the note is still one note on screen', #render.notes_in(buf), 1)
+
+  -- 1b. a name too long for the divider drops below it as text: what must not
+  --     be overrun is the frame, and a diff half is a narrow window
+  vim.cmd('vsplit')
+  local narrow = util.buf_width(buf)
+  check('the split really is narrow', narrow < 60, narrow)
+  local long_author = 'the continuous integration robot no. 7'
+  virgil.reply(note.id, { body = 'noted', author = long_author })
+  render.render(buf)
+  local widest, saw_bare_divider, saw_name = 0, false, false
+  for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, util.NS, 0, -1, { details = true })) do
+    for _, row in ipairs(rows_of(m[4].virt_lines)) do
+      widest = math.max(widest, vim.fn.strdisplaywidth(row))
+      -- a divider with nothing written in it: `─` is three bytes, so this is a
+      -- question about letters rather than a pattern over the dashes
+      saw_bare_divider = saw_bare_divider or (vim.startswith(row, '├') and row:find('%a') == nil)
+      saw_name = saw_name or row:find('continuous integration', 1, true) ~= nil
+    end
+  end
+  check('the frame stays inside the window', widest <= narrow, widest .. ' > ' .. narrow)
+  check('the divider goes plain when the name will not fit', saw_bare_divider)
+  check('and the name is kept in full below it', saw_name)
+  vim.cmd('only')
+  virgil.unreply(note.id, store.get(repo, note.id).replies[3].id)
+
+  -- 2. the composer path, which is what the keymap takes
+  vim.api.nvim_set_current_buf(buf)
+  render.render(buf)
+  vim.api.nvim_win_set_cursor(0, { 12, 0 })
+  virgil.reply()
+  local cbuf = vim.api.nvim_get_current_buf()
+  eq('no id means the note at the cursor', table.concat(vim.api.nvim_buf_get_lines(cbuf, 0, -1, false), '\n'), '')
+  vim.api.nvim_buf_set_lines(cbuf, 0, -1, false, { 'typed by hand', '', 'over two paragraphs' })
+  vim.cmd('write')
+  local thread = store.get(repo, note.id).replies
+  eq('a reply has no summary line: the buffer is the reply', thread[3].body, 'typed by hand\n\nover two paragraphs')
+
+  -- 3. rewriting and deleting one
+  -- `thread` is the stored list itself, and deleting from it shifts it: take
+  -- the ids now, while they still say what they say
+  local ids = vim.tbl_map(function(r)
+    return r.id
+  end, thread)
+  local rid = ids[1]
+  virgil.update_reply(note.id, rid, { body = 'reworded' })
+  eq('a reply can be reworded', store.get_reply(repo, note.id, rid).body, 'reworded')
+  check('and the rewrite is stamped', store.get_reply(repo, note.id, rid).updated_at ~= nil)
+  eq('emptying it changes nothing', store.update_reply(repo, note.id, rid, { body = '  ' }), nil)
+  eq('the words are still there', store.get_reply(repo, note.id, rid).body, 'reworded')
+  eq('unreply deletes exactly one', virgil.unreply(note.id, rid), true)
+  eq('leaving the rest of the thread', #store.get(repo, note.id).replies, 2)
+  eq('a missing reply is not fatal', virgil.unreply(note.id, 'r-nope'), false)
+
+  -- 4. the thread goes to disk and comes back
+  reset_state()
+  local reloaded = store.get(git.repo(tdir), note.id)
+  eq('replies survive a reload', #reloaded.replies, 2)
+  eq('with their words', reloaded.replies[2].body, 'typed by hand\n\nover two paragraphs')
+  eq('and their ids', reloaded.replies[1].id, ids[2])
+
+  -- 5. deleting the note takes the thread with it
+  local orphaned = virgil.note({ path = 'a.txt', line = 4, summary = 'short-lived' })
+  virgil.reply(orphaned.id, { body = 'answered once' })
+  virgil.remove(orphaned.id)
+  check('a deleted note takes its replies with it', store.get(repo, orphaned.id) == nil)
+
+  -- 6. two instances answering the same note keep both answers. Everywhere else
+  --    the copy we hold wins; replies are only ever appended, so they merge
+  local file = store.path(repo)
+  local disk = vim.json.decode(table.concat(vim.fn.readfile(file), '\n'))
+  for _, n in ipairs(disk.notes) do
+    if n.id == note.id then
+      table.insert(n.replies, { id = 'r-elsewhere', author = 'other-nvim', body = 'from another instance', created_at = util.now() })
+    end
+  end
+  vim.fn.writefile({ vim.json.encode(disk) }, file)
+  virgil.reply(note.id, { body = 'from this one' })
+  local merged = store.get(repo, note.id).replies
+  eq('both instances\' replies are kept', #merged, 4)
+  local bodies = table.concat(vim.tbl_map(function(r)
+    return r.body
+  end, merged), ' | ')
+  check('the other instance\'s among them', bodies:find('from another instance', 1, true) ~= nil, bodies)
+  check('and ours', bodies:find('from this one', 1, true) ~= nil, bodies)
+  eq('a merge is not a duplicate', #store.all(repo), 1)
+
+  -- 7. the formats carry a thread out and back
+  local out = vim.fs.joinpath(tmp_root, 'threads.json')
+  virgil.export({ format = 'agent-context', out = out })
+  local decoded = vim.json.decode(table.concat(vim.fn.readfile(out), '\n'))
+  local ann = decoded.files[1].annotations[1]
+  eq('agent-context carries the thread', #ann.replies, 4)
+  check('with who said it', ann.replies[1].author ~= nil, vim.inspect(ann.replies[1]))
+  virgil.import({ file = out })
+  local imported
+  for _, n in ipairs(store.all(repo)) do
+    if n.id ~= note.id and n.summary == 'needs an answer' then
+      imported = n
+    end
+  end
+  eq('and import reads it back', imported and #imported.replies, 4)
+  check('handing out fresh ids for them', imported.replies[1].id ~= merged[1].id, imported.replies[1].id)
+  local md = virgil.export({ format = 'markdown' })
+  check('markdown nests them under the note', md:find('%s+%- %*%*other%-nvim%*%*') ~= nil, md)
+end
+
 --------------------------------------------------------------------- summary
 
 io.write(('\n%d passed, %d failed\n'):format(passed, #failures))
